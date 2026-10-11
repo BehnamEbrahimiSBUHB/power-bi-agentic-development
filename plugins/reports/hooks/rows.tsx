@@ -69,9 +69,19 @@ const Rows: ClientModule<RowsProps, Local> = (props, surface) => {
       return
     }
     if (e.type !== 'down' || (e.button ?? 'left') !== 'left' || !row) return
+    const wide = (seg: Seg) => [...seg.t].length + (seg.spin ? 1 : 0)
     let x = 0
     for (const seg of row.left) {
-      const w = [...seg.t].length
+      const w = wide(seg)
+      if (seg.tab && e.x >= x && e.x < x + w) {
+        surface.post({ tab: seg.tab })
+        return
+      }
+      x += w
+    }
+    x = surface.columns - (props.bar ? 1 : 0) - row.right.reduce((n, seg) => n + wide(seg), 0)
+    for (const seg of row.right) {
+      const w = wide(seg)
       if (seg.tab && e.x >= x && e.x < x + w) {
         surface.post({ tab: seg.tab })
         return

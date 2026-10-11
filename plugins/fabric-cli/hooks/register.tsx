@@ -589,6 +589,44 @@ const PROPS = 'props:toggle'
 let propsOpen = false
 const TOGGLE_COLOR: Record<string, string> = { domains: '#c4b5fd', capacities: '#5eead4', find: '#fbbf24' }
 const FIND = 'F:'
+const CAP = 'cap:'
+const capBusy = new Set<string>()
+
+function switchable(n: TreeNode): boolean {
+  const run = runState(n)
+  return (run === 'paused' || run === 'running') && pausable(n.sig)
+}
+
+function pausable(capacity: string): boolean {
+  return /^F\d+$/.test((capacitySku.get(capacity.toLowerCase()) ?? '').trim().toUpperCase())
+}
+
+async function toggleRun($: EngineInterface, capacity: string): Promise<void> {
+  const key = capacity.toLowerCase()
+  if (capBusy.has(key)) return
+  if (!pausable(key)) return void $.ui.toast('Only F capacities can be paused or resumed here')
+  const name = capacityInfo.get(key)?.name ?? capacityName.get(key) ?? ''
+  if (!name) return void $.ui.toast('capacity name unknown; refresh the pane')
+  const resume = paused(key)
+  capBusy.add(key)
+  $.ui.invalidate('ui.render')
+  try {
+    await withPending($, `${resume ? 'Resuming' : 'Pausing'} ${name}…`, () => fabRaw($, [resume ? 'start' : 'stop', `.capacities/${name}.Capacity`, '-f'], true))
+    capacityState.set(key, resume ? 'Active' : 'Paused')
+    $.ui.toast(`${name} ${resume ? 'resumed' : 'paused'}`)
+  } catch (err) {
+    $.ui.toast(`could not ${resume ? 'resume' : 'pause'} ${name}: ${err instanceof Error ? err.message : String(err)}`)
+  } finally {
+    capBusy.delete(key)
+    await loadDomains($, true).catch(() => undefined)
+    const ex = await get($)
+    if (ex.cursor && ex.nodes.find(n => n.id === ex.cursor)?.sig.toLowerCase() === key) {
+      const n = ex.nodes.find(x => x.id === ex.cursor)
+      if (n) await patchView($, cur => (cur.cursor === n.id ? { detail: [`capacity ${shownName(n)}`, ...capacityDetail(n.sig)] } : {}))
+    }
+    $.ui.invalidate('ui.render')
+  }
+}
 type Hit = { name: string; id: string; type: string; workspace: string; workspace_id: string }
 let findMode = false
 let findQuery = ''
@@ -1460,6 +1498,10 @@ export const register: Register = (on, options) => {
         pressHit($, Number(id.slice(FIND.length)))
         return {}
       }
+      if (id.startsWith(CAP)) {
+        quiet(toggleRun($, id.slice(CAP.length)))
+        return {}
+      }
       if (id === `${TOGGLE}find`) {
         toggleFind($)
         return {}
@@ -1491,7 +1533,11 @@ export const register: Register = (on, options) => {
     }
     if (e.requestId !== PANE || e.element !== 'rows' || !e.data || typeof e.data !== 'object') return next(e)
     const view = views.get(e.surface) ?? { from: 0, max: 0 }
-    const data = e.data as { press?: unknown; key?: unknown; ctrl?: unknown; shift?: unknown; scrollTo?: unknown; copy?: unknown }
+    const data = e.data as { press?: unknown; key?: unknown; ctrl?: unknown; shift?: unknown; scrollTo?: unknown; copy?: unknown; tab?: unknown }
+    if (typeof data.tab === 'string' && data.tab.startsWith(CAP)) {
+      quiet(toggleRun($, data.tab.slice(CAP.length)))
+      return {}
+    }
     const ex = await get($)
     if (typeof data.scrollTo === 'number') {
       const to = Math.round(Math.max(0, Math.min(1, data.scrollTo)) * view.max)
@@ -1646,7 +1692,12 @@ export const register: Register = (on, options) => {
         isBright || isDim ? { t: name, sh: tone, dim: isDim, b: isBright } : { t: name, c: faded ? '#6e6e7a' : g.label, b: n.id === ex.selected },
       ]
       const run = runState(n)
-      const state: Seg[] = run ? [{ t: (tier === 'plain' ? (run === 'paused' ? '‖' : '▸') : run === 'paused' ? '\u{f03e4}' : '\u{f040a}') + ' ', c: run === 'paused' ? '#d9a54a' : run === 'fixed' ? '#6e6e7a' : '#5cc28a' }] : []
+      const toggleable = switchable(n)
+      const state: Seg[] = !run
+        ? []
+        : toggleable && capBusy.has(n.sig.toLowerCase())
+          ? [{ t: '', spin: true }, { t: ' ' }]
+          : [{ t: (tier === 'plain' ? (run === 'paused' ? '‖' : '▸') : run === 'paused' ? '\u{f03e4}' : '\u{f040a}') + ' ', c: run === 'paused' ? '#d9a54a' : run === 'fixed' ? '#6e6e7a' : '#5cc28a', ...(toggleable ? { tab: `${CAP}${n.sig}` } : {}) }]
       const [sku, tail] = splitNote(n, padCount(note.trim()))
       const right: Seg[] = sku ? [{ t: ` ${sku} `, c: '#6e6e7a' }, ...state.map(s => ({ ...s, t: s.t.trimEnd() })), { t: tail, c: '#6e6e7a' }] : [...state, ...(note ? [{ t: ` ${padCount(note.trim())}`, c: '#6e6e7a' }] : [])]
       return { id: n.kind === 'placeholder' || n.kind === EMPTY ? '' : n.id, left: clean(left), right }
@@ -1726,14 +1777,27 @@ export const register: Register = (on, options) => {
             {busy ? <Text color={TONES[busy]?.bright[1]}>…</Text> : null}
           </Box>
           <Box flexGrow={1} />
-          {splitNote(n, note)[0] ? <Text color={MUTED}>{splitNote(n, note)[0]}</Text> : null}
-          {runState(n) ? <Box marginLeft={splitNote(n, note)[0] ? 1 : 0} marginRight={splitNote(n, note)[0] ? 0 : 1}>{icon16(runState(n) === 'paused' ? FABRIC_SVG['ui:pause'] : runState(n) === 'fixed' ? dimmed(FABRIC_SVG['ui:play']) : FABRIC_SVG['ui:play'], runState(n) === 'fixed' ? 'trial, always running' : runState(n), { t: '', c: MUTED }, `st:${n.id}`)}</Box> : null}
-          {splitNote(n, note)[1] ? <Text color={MUTED}>{splitNote(n, note)[1]}</Text> : null}
           {faded ? null : (
             <Box position="absolute" top={0} left={0} right={0} bottom={0}>
               <Client key={`z:${n.id}`} module="./zone.tsx" props={{ id: n.id } satisfies ZoneProps} width="100%" height="100%" />
             </Box>
           )}
+          {splitNote(n, note)[0] ? <Text color={MUTED}>{splitNote(n, note)[0]}</Text> : null}
+          {runState(n) ? (
+            <Box position="relative" flexDirection="row" alignItems="center" marginLeft={splitNote(n, note)[0] ? 1 : 0} marginRight={splitNote(n, note)[0] ? 0 : 1}>
+              {switchable(n) && capBusy.has(n.sig.toLowerCase()) ? (
+                <Client key={`cs:${n.id}`} module="./rows.tsx" props={{ rows: [{ id: '', left: [{ t: '', spin: true }], right: [] }], active: '', activeBg: '', hoverBg: '', tones: TONES } satisfies RowsProps} />
+              ) : (
+                icon16(runState(n) === 'paused' ? FABRIC_SVG['ui:pause'] : runState(n) === 'fixed' ? dimmed(FABRIC_SVG['ui:play']) : FABRIC_SVG['ui:play'], runState(n) === 'fixed' ? 'trial, always running' : switchable(n) ? (runState(n) === 'paused' ? 'paused, click to resume' : 'running, click to pause') : runState(n), { t: '', c: MUTED }, `st:${n.id}`)
+              )}
+              {switchable(n) ? (
+                <Box position="absolute" top={0} left={0} right={0} bottom={0}>
+                  <Client key={`z:${CAP}${n.sig}`} module="./zone.tsx" props={{ id: `${CAP}${n.sig}` } satisfies ZoneProps} width="100%" height="100%" />
+                </Box>
+              ) : null}
+            </Box>
+          ) : null}
+          {splitNote(n, note)[1] ? <Text color={MUTED}>{splitNote(n, note)[1]}</Text> : null}
         </Box>
       )
     }
