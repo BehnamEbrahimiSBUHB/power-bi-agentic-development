@@ -7,7 +7,6 @@ import { FABRIC_SVG } from './svg-data'
 import { SETTING_DOCS } from './setting-data'
 import type { RowSpec, RowsProps, Seg } from './rows'
 import type { ZoneProps } from './zone'
-import type { BarProps } from './bar'
 import { ancestors, EMPTY, empty, emptyMark, isLoaded, merge, type Row, visible } from './tree'
 import { inOneLake, modelOf, parseChildren, parseOneLake, parseWorkspaces, PLACEHOLDER, typeLabel } from './fabric'
 import { FAB_TONE, type FabKind, fabCalls, fabGuids, fabKind, fabPositionals, fabWorkspaces, type Invocation, invocations, join, modelFromConnection, posix, queryOf, targetLabel, tokenize, useDrives } from './parse'
@@ -531,13 +530,8 @@ type Setting = { settingName: string; title?: string; enabled?: boolean; tenantS
 const settingOf = new Map<string, Setting>()
 const TENANT = '#tenant'
 const TOGGLE = 'toggle:'
-const DETAILS_REGION = 'region:details'
-const SLACK = 1
-const desk = { pinAsked: false, active: false, from: null as number | null, lastFrom: 0, treeMax: 0, treeRoom: 0, detailFrom: 0, detailMax: 0, detailRoom: 0, page: 10, region: 'tree' as 'tree' | 'details' }
 
-function clamp(n: number, lo: number, hi: number): number {
-  return Math.max(lo, Math.min(hi, n))
-}
+let nativeScroll = false
 const optimistic = new Map<string, boolean>()
 let pressedCursor = ''
 const TENANT_CLOSED = '#tenant-closed'
@@ -1258,24 +1252,9 @@ export const register: Register = (on, options) => {
   })
 
   on('ui.message', async ($, e, next) => {
-    if (e.requestId === PANE && (e.element.startsWith('z:') || e.element.startsWith('bar:')) && e.data && typeof e.data === 'object') {
-      const data = e.data as { zone?: unknown; hover?: unknown; bar?: unknown; frac?: unknown; ctrl?: unknown; shift?: unknown }
-      if (typeof data.hover === 'string') {
-        desk.region = data.hover === DETAILS_REGION || data.hover === 'bar:details' ? 'details' : 'tree'
-        return {}
-      }
-      if (typeof data.bar === 'string' && typeof data.frac === 'number') {
-        const details = data.bar === 'bar:details'
-        const total = details ? desk.detailMax + desk.detailRoom : desk.treeMax + desk.treeRoom
-        const at = clamp(Math.round(data.frac * total - (details ? desk.detailRoom : desk.treeRoom) / 2), 0, details ? desk.detailMax : desk.treeMax)
-        if (details) desk.detailFrom = at
-        else desk.from = at
-        desk.region = details ? 'details' : 'tree'
-        $.ui.invalidate('ui.render')
-        return {}
-      }
+    if (e.requestId === PANE && e.element.startsWith('z:') && e.data && typeof e.data === 'object') {
+      const data = e.data as { zone?: unknown; ctrl?: unknown; shift?: unknown }
       const id = typeof data.zone === 'string' ? data.zone : ''
-      if (id === DETAILS_REGION) return {}
       if (id === `${TOGGLE}domains`) quiet(toggleDomains($))
       else if (id === `${TOGGLE}capacities`) quiet(toggleCapacity($))
       else if (id) {
@@ -1341,14 +1320,7 @@ export const register: Register = (on, options) => {
   })
 
   on('ui.scroll', { component: 'Pane', requestId: PANE }, async ($, e, next) => {
-    if (desk.active && !e.pointer) {
-      if (e.origin && e.origin.kind !== 'person') return next(e)
-      const step = Math.abs(e.by) >= e.bodyRows ? Math.sign(e.by) * desk.page : e.by
-      if (desk.region === 'details') desk.detailFrom = clamp(desk.detailFrom + step, 0, desk.detailMax)
-      else desk.from = clamp((desk.from ?? desk.lastFrom) + step, 0, desk.treeMax)
-      $.ui.invalidate('ui.render')
-      return e.contentRows - e.bodyRows >= SLACK * 2 ? next({ ...e, offset: SLACK }) : {}
-    }
+    if (nativeScroll) return next(e)
     const view = views.get('terminal') ?? views.get('desktop') ?? { from: 0, max: 0 }
     const ex = await get($)
     const to = Math.max(0, Math.min(view.max, (ex.scroll ?? view.from) + Math.sign(e.by) * Math.max(3, Math.abs(e.by))))
@@ -1576,8 +1548,8 @@ export const register: Register = (on, options) => {
         <Text> </Text>
       </Box>
     )
+    nativeScroll = native
     if (native) {
-      desk.active = true
       const body = Math.max(10, e.props.scroll?.bodyRows ?? 30)
       const line = (key: string, child: unknown) => (
         <Box key={key} height={1} overflow="hidden" flexDirection="row" alignItems="center">
@@ -1605,9 +1577,6 @@ export const register: Register = (on, options) => {
                   </Box>
                   <Box flexShrink={1}>
                     <Text wrap="truncate-end">{d.value}</Text>
-                  </Box>
-                  <Box position="absolute" top={0} left={0} right={0} bottom={0}>
-                    <Client key={`z:${DETAILS_REGION}:${i}`} module="./zone.tsx" props={{ id: DETAILS_REGION } satisfies ZoneProps} width="100%" height="100%" />
                   </Box>
                 </Box>,
               ),
@@ -1646,31 +1615,22 @@ export const register: Register = (on, options) => {
           ]
         : []
       const headRows = 4 + (pending ? 1 : 0) + (!ex.setup && ex.nodes.length === 0 ? 1 : 0)
-      const detailRoom = detailLines.length ? Math.min(detailLines.length, Math.max(4, Math.floor(body * 0.4))) : 0
-      const treeRoom = Math.max(3, body - headRows - (detailRoom ? detailRoom + 1 : 0))
-      desk.treeMax = Math.max(0, rows.length - treeRoom)
-      desk.detailMax = Math.max(0, detailLines.length - detailRoom)
-      desk.treeRoom = treeRoom
-      desk.detailRoom = detailRoom
-      desk.page = Math.max(1, treeRoom - 1)
-      desk.detailFrom = clamp(desk.detailFrom, 0, desk.detailMax)
-      const treeFrom = clamp(desk.from ?? from, 0, desk.treeMax)
-      desk.lastFrom = treeFrom
+      const at = shownNode ? rows.findIndex(r => r.node.id === shownNode.id) : -1
+      const indent = at >= 0 ? (rows[at]!.depth + 1) * 2 + 1 : 1
+      const inline = detailLines.map((d, i) => (
+        <Box key={`dl:${i}`} height={1} flexDirection="row" paddingLeft={indent} backgroundColor="#1b1c20">
+          {d}
+        </Box>
+      ))
+      const lines = [
+        ...(at < 0 ? inline : []),
+        ...rows.flatMap((r, i) => (i === at ? [nativeRow(r), ...inline] : [nativeRow(r)])),
+      ]
       const offset = e.props.scroll?.offset ?? 0
-      if (offset === SLACK) desk.pinAsked = false
-      else if (!desk.pinAsked) {
-        desk.pinAsked = true
-        quiet($.ui.scroll({ to: { key: 'desk-body' }, in: PANE, block: 'start' }))
-      }
-      const bar = (key: string, total: number, start: number, size: number) =>
-        total <= size ? null : (
-          <Box key={`${key}-box`} width={1} height={size} flexShrink={0}>
-            <Client key={key} module="./bar.tsx" props={{ id: key, total, start, size, track: '#1d1d21', thumb: '#4a4a55' } satisfies BarProps} width={1} height={size} />
-          </Box>
-        )
+      const first = Math.max(0, offset - headRows - body)
+      const last = Math.min(lines.length, offset - headRows + body * 2)
       return (
-        <Box flexDirection="column" height={body + SLACK * 2} overflow="hidden">
-          <Box height={SLACK} />
+        <Box flexDirection="column">
           <Box key="desk-body" height={1} flexDirection="row" alignItems="center">
             <Box flexGrow={1} flexShrink={1} flexDirection="row" alignItems="center" gap={1}>
               {icon16(FABRIC_SVG.fabric, 'Microsoft Fabric', { t: titleGlyph(tier), c: TITLE_COLOR }, 'logo')}
@@ -1685,10 +1645,7 @@ export const register: Register = (on, options) => {
                 key="q"
                 placeholder="Filter, or Enter to jump"
                 value={ex.query}
-                onInput={(v: string) => {
-                  desk.from = null
-                  quiet(patchView($, () => ({ query: v })))
-                }}
+                onInput={(v: string) => quiet(patchView($, () => ({ query: v })))}
                 onSubmit={(v: string) => quiet(patch($, cur => jumpTo(cur, v)))}
               />
             </Box>
@@ -1704,26 +1661,15 @@ export const register: Register = (on, options) => {
               <Text color={MUTED}>{ex.target ? 'nothing loaded yet' : HINT}</Text>
             </Box>
           ) : null}
-          <Box key="tree" height={treeRoom} flexDirection="row" overflow="hidden">
-            {ex.setup ? (
-              <Client key="setup" module="./rows.tsx" props={{ rows: setupRows(ex.setup, tier, width), active: '', activeBg: '', hoverBg: '#2d2f33', tones: TONES, spinner } satisfies RowsProps} />
-            ) : (
-              <Box flexDirection="column" flexGrow={1} flexShrink={1}>
-                {rows.slice(treeFrom, treeFrom + treeRoom).map(nativeRow)}
-              </Box>
-            )}
-            {bar('bar:tree', rows.length, treeFrom, treeRoom)}
-          </Box>
-          {detailRoom ? rule('rule-top') : null}
-          {detailRoom ? (
-            <Box key="details" height={detailRoom} flexDirection="row" overflow="hidden">
-              <Box flexDirection="column" flexGrow={1} flexShrink={1}>
-                {detailLines.slice(desk.detailFrom, desk.detailFrom + detailRoom)}
-              </Box>
-              {bar('bar:details', detailLines.length, desk.detailFrom, detailRoom)}
+          {ex.setup ? (
+            <Client key="setup" module="./rows.tsx" props={{ rows: setupRows(ex.setup, tier, width), active: '', activeBg: '', hoverBg: '#2d2f33', tones: TONES, spinner } satisfies RowsProps} />
+          ) : (
+            <Box key="tree" flexDirection="column">
+              {first > 0 ? <Box key="above" height={first} /> : null}
+              {lines.slice(first, Math.max(first, last))}
+              {last < lines.length ? <Box key="below" height={lines.length - Math.max(first, last)} /> : null}
             </Box>
-          ) : null}
-          <Box height={SLACK} />
+          )}
         </Box>
       )
     }
