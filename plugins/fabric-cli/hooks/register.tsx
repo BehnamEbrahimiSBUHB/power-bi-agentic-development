@@ -1627,7 +1627,7 @@ export const register: Register = (on, options) => {
       const left: Seg[] = [
         { t: '  '.repeat(r.depth) },
         { t: arrow, c: '#7a7a86' },
-        isBright || isDim ? { t: g.char + ' ', sh: tone, dim: isDim, one: true } : { t: g.char + ' ', c: faded ? '#6e6e7a' : g.color },
+        ...(n.kind === 'placeholder' && n.name === 'loading…' ? [{ t: '', spin: true }, { t: ' ' }] : [isBright || isDim ? { t: g.char + ' ', sh: tone, dim: isDim, one: true } : { t: g.char + ' ', c: faded ? '#6e6e7a' : g.color }]),
         isBright || isDim ? { t: name, sh: tone, dim: isDim, b: isBright } : { t: name, c: faded ? '#6e6e7a' : g.label, b: n.id === ex.selected },
       ]
       const run = runState(n)
@@ -1916,7 +1916,7 @@ export const register: Register = (on, options) => {
           </Box>
           {pending ? (
             <Box height={1}>
-              <Client key="pending" module="./rows.tsx" props={{ rows: [{ id: '', left: [{ t: pending + ' ', c: MUTED }, { t: '', spin: true, c: TITLE_COLOR }], right: [] }], active: '', activeBg: '', hoverBg: '', tones: TONES } satisfies RowsProps} />
+              <Client key="pending" module="./rows.tsx" props={{ rows: [{ id: '', left: [{ t: '', spin: true }, { t: ' ' + pending, c: MUTED }], right: [] }], active: '', activeBg: '', hoverBg: '', tones: TONES } satisfies RowsProps} />
             </Box>
           ) : null}
           {!ex.setup && ex.nodes.length === 0 ? (
@@ -1971,7 +1971,7 @@ export const register: Register = (on, options) => {
           {native ? null : toggles}
         </Box>
         {pending ? (
-          <Client key="pending" module="./rows.tsx" props={{ rows: [{ id: '', left: [{ t: pending + ' ', c: MUTED }, { t: '', spin: true, c: TITLE_COLOR }], right: [] }], active: '', activeBg: '', hoverBg: '', tones: TONES } satisfies RowsProps} />
+          <Client key="pending" module="./rows.tsx" props={{ rows: [{ id: '', left: [{ t: '', spin: true }, { t: ' ' + pending, c: MUTED }], right: [] }], active: '', activeBg: '', hoverBg: '', tones: TONES } satisfies RowsProps} />
         ) : null}
         {!ex.setup && ex.nodes.length === 0 && <Text color={MUTED}>{ex.target ? 'nothing loaded yet' : HINT}</Text>}
         {ex.setup ? (

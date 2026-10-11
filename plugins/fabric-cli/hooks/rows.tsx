@@ -14,7 +14,7 @@ export type RowsProps = {
 type Local = { hover: number; phase: number; drag: boolean; ref: { stop?: () => void; unpoint?: () => void } }
 
 const TICK_MS = 90
-const FRAMES = ['O  ', 'oO ', '.oO', ' .O', '  O', ' Oo', 'Oo.', 'O. ']
+const FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
 const GRADIENT = ['#5eead4', '#67e8f9', '#7dd3fc', '#93c5fd', '#a5b4fc', '#c4b5fd', '#d8b4fe', '#f0abfc', '#d8b4fe', '#c4b5fd', '#a5b4fc', '#93c5fd', '#7dd3fc', '#67e8f9']
 
 function shimmer(i: number, phase: number, len: number, palette: string[]): string {
@@ -95,11 +95,9 @@ const Rows: ClientModule<RowsProps, Local> = (props, surface) => {
       return (
         <Text key={String(k)} bold={s.b}>
           {s.t ? <Text color={s.c}>{s.t}</Text> : null}
-          {[...frame].map((ch, i) => (
-            <Text key={String(i)} color={GRADIENT[(state.phase + i * 2) % GRADIENT.length]} bold={ch === 'O'}>
-              {ch}
-            </Text>
-          ))}
+          <Text color={GRADIENT[state.phase % GRADIENT.length]} bold>
+            {frame}
+          </Text>
         </Text>
       )
     }
