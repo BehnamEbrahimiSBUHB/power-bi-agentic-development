@@ -510,11 +510,34 @@ function jsonOf<T>(text: string): T | null {
   }
 }
 
+let groupsLoaded: Promise<void> | null = null
+let pending = ''
+
+function warmGroups($: EngineInterface): Promise<void> {
+  if (!groupsLoaded) groupsLoaded = loadDomains($).catch(() => undefined)
+  return groupsLoaded
+}
+
+async function withPending<T>($: EngineInterface, text: string, fn: () => Promise<T>): Promise<T> {
+  pending = text
+  $.ui.invalidate('ui.render')
+  try {
+    return await fn()
+  } finally {
+    pending = ''
+    $.ui.invalidate('ui.render')
+  }
+}
+
 async function loadDomains($: EngineInterface, withCapacity = false): Promise<void> {
-  const names = jsonOf<{ result?: { data?: { name?: string; id?: string }[] } }>(await fabRaw($, ['ls', '/.domains', '-l', '--output_format', 'json']).catch(() => ''))
+  const [domainList, capacityList] = await Promise.all([
+    fabRaw($, ['ls', '/.domains', '-l', '--output_format', 'json']).catch(() => ''),
+    fabRaw($, ['ls', '/.capacities', '-l', '--output_format', 'json']).catch(() => ''),
+  ])
+  const names = jsonOf<{ result?: { data?: { name?: string; id?: string }[] } }>(domainList)
   domainName.clear()
   for (const d of names?.result?.data ?? []) if (d.id && d.name) domainName.set(d.id.toLowerCase(), d.name.replace(/\.Domain$/i, ''))
-  const caps = withCapacity ? jsonOf<{ result?: { data?: { name?: string; id?: string }[] } }>(await fabRaw($, ['ls', '/.capacities', '-l', '--output_format', 'json']).catch(() => '')) : null
+  const caps = jsonOf<{ result?: { data?: { name?: string; id?: string }[] } }>(capacityList)
   capacityName.clear()
   for (const c of caps?.result?.data ?? []) if (c.id && c.name) capacityName.set(c.id.toLowerCase(), c.name.replace(/\.Capacity$/i, ''))
   const found = new Map<string, string>()
@@ -593,14 +616,19 @@ function grouped(nodes: TreeNode[], on: boolean, byCapacity = false): TreeNode[]
 
 async function toggleDomains($: EngineInterface): Promise<void> {
   const on = (await get($)).byDomain === false
-  if (on && domainOf.size === 0) await loadDomains($, (await get($)).byCapacity === true)
+  if (on && domainOf.size === 0) await withPending($, 'Fetching domains…', () => warmGroups($))
   await patch($, cur => ({ byDomain: on, nodes: grouped(cur.nodes, on, cur.byCapacity === true), root: /^[DC]:/.test(cur.root) ? '' : cur.root }))
 }
 
 async function toggleCapacity($: EngineInterface): Promise<void> {
   const ex = await get($)
   const on = ex.byCapacity !== true
-  if (on && capacityOf.size === 0) await loadDomains($, true)
+  if (on && capacityOf.size === 0) {
+    await withPending($, 'Fetching capacities…', async () => {
+      await warmGroups($)
+      if (capacityOf.size === 0) await loadDomains($, true)
+    })
+  }
   await patch($, cur => ({ byCapacity: on, nodes: grouped(cur.nodes, cur.byDomain !== false, on), root: /^[DC]:/.test(cur.root) ? '' : cur.root }))
 }
 
@@ -1087,6 +1115,7 @@ export const register: Register = (on, options) => {
     if (ex.target && !tenantName && !tenantAsked) {
       tenantAsked = true
       quiet(loadTenant($).then(() => $.ui.invalidate('ui.render')))
+      quiet(warmGroups($))
     }
     const now = await $.clock.now()
     const busyTone = (id: string) => {
@@ -1179,7 +1208,8 @@ export const register: Register = (on, options) => {
     const MUTED = '#6e6e7a'
     const icon16 = (source: string | undefined, alt: string, fallback: Seg, key: string) =>
       native && Svg && source ? <Svg key={key} source={source} alt={alt} width={16} height={16} /> : <Text key={key} color={fallback.c}>{fallback.t}</Text>
-    const rule = (key: string) => <Text key={key} color="#3a3a42" wrap="truncate-end">{'─'.repeat(width)}</Text>
+    const rule = (key: string) => <Text key={key} color="#2e2e34" wrap="truncate-end">{'─'.repeat(width)}</Text>
+    const GUIDE = '#34343c'
     const nativeRow = (r: (typeof rows)[number]) => {
       const n = r.node
       const g = glyph(n, 'plain')
@@ -1188,19 +1218,40 @@ export const register: Register = (on, options) => {
       const label = clip(n.name, Math.max(4, width - r.depth * 2 - 8 - note.length))
       const busy = busyTone(n.id)
       return (
-        <Box key={`n:${n.id}`} flexDirection="row" alignItems="center" gap={1} backgroundColor={n.id === ex.cursor ? '#2c313c' : undefined} hover={{ backgroundColor: '#26282d' }}>
-          <Box width={r.depth * 2} flexShrink={0} />
-          <Box width={2} flexShrink={0}>
-            {r.leaf ? null : <Button key={`t:${n.id}`} plain dimColor label={r.open ? '⌄' : '›'} onPress={() => quiet(select($, n))} />}
+        <Box key={`n:${n.id}`} flexDirection="row" alignItems="center" backgroundColor={n.id === ex.cursor ? '#2a2d34' : undefined} hover={{ backgroundColor: '#232529' }}>
+          {Array.from({ length: r.depth }, (_, i) => (
+            <Box key={`g:${i}`} width={2} flexShrink={0}>
+              <Text color={GUIDE}>│</Text>
+            </Box>
+          ))}
+          <Box width={2} flexShrink={0} flexDirection="row" alignItems="center">
+            {r.leaf ? null : icon16(FABRIC_SVG[r.open ? 'ui:chevron-down' : 'ui:chevron-right'], r.open ? 'collapse' : 'expand', { t: r.open ? '⌄' : '›', c: MUTED }, `c:${n.id}`)}
           </Box>
-          {icon16(FABRIC_SVG[n.kind], typeLabel(n.kind), { t: g.char, c: g.color }, `i:${n.id}`)}
-          {faded ? <Text color={MUTED}>{label}</Text> : <Button key={`r:${n.id}`} plain label={label} onPress={() => quiet(press($, n))} />}
-          {busy ? <Text color={TONES[busy]?.bright[1]}>…</Text> : null}
+          <Box flexDirection="row" alignItems="center" gap={1} flexShrink={1}>
+            {icon16(FABRIC_SVG[n.kind], typeLabel(n.kind), { t: g.char, c: g.color }, `i:${n.id}`)}
+            {faded ? <Text color={MUTED}>{label}</Text> : <Button key={`r:${n.id}`} plain label={label} onPress={() => quiet(press($, n))} />}
+            {busy ? <Text color={TONES[busy]?.bright[1]}>…</Text> : null}
+          </Box>
           <Box flexGrow={1} />
           {note ? <Text color={MUTED}>{note}</Text> : null}
         </Box>
       )
     }
+    const dimmed = (source: string | undefined) => source?.replace(/#[0-9a-fA-F]{6}/g, '#5c5c66')
+    const toggle = (key: string, isOn: boolean, svg: string, what: string, nerd: string, plain: string, run: () => void) =>
+      native ? (
+        <Box key={`tip:${key}`} flexDirection="row" alignItems="center" position="relative" paddingX={1} backgroundColor={isOn ? '#2f3540' : undefined} hover={{ backgroundColor: isOn ? '#38404d' : '#26282d' }}>
+          {icon16(isOn ? FABRIC_SVG[svg] : dimmed(FABRIC_SVG[svg]), `${isOn ? 'Hide' : 'Show'} ${what}`, { t: plain, c: MUTED }, `ti:${key}`)}
+          <Box position="absolute" top={0} left={0} right={0} bottom={0}>
+            <Button key={key} plain label={'  '} onPress={run} />
+          </Box>
+          <Box position="absolute" top={1} right={0} display="none" hover={{ display: 'flex' }} backgroundColor="#2b2b31" paddingX={1}>
+            <Text wrap="truncate-end">{`${isOn ? 'Hide' : 'Show'} ${what}`}</Text>
+          </Box>
+        </Box>
+      ) : (
+        <Button key={key} plain dimColor={!isOn} label={`${icon(nerd, plain)} `} onPress={run} />
+      )
     const details = ex.detail.slice(1, DETAIL_ROWS).map(l => {
       const at = l.indexOf(': ')
       const key = at > 0 ? l.slice(0, at) : ''
@@ -1215,9 +1266,9 @@ export const register: Register = (on, options) => {
         ]
       : []
     const toggles = (
-      <Box flexDirection="row" gap={2}>
-        {ex.target && <Button key="domains" plain dimColor={ex.byDomain === false} label={native ? 'Domains' : `${icon('\u{f0ac}', '◇')} `} onPress={() => quiet(toggleDomains($))} />}
-        <Button key="capacities" plain dimColor={ex.byCapacity !== true} label={native ? 'Capacities' : `${icon('\u{f04c5}', '◔')} `} onPress={() => quiet(toggleCapacity($))} />
+      <Box flexDirection="row" alignItems="center" gap={native ? 1 : 2}>
+        {ex.target && toggle('domains', ex.byDomain !== false, 'domain', 'domains', '\u{f0ac}', '◇', () => quiet(toggleDomains($)))}
+        {ex.target && toggle('capacities', ex.byCapacity === true, 'capacity', 'capacities', '\u{f04c5}', '◔', () => quiet(toggleCapacity($)))}
         {rootNode && <Button key="up" plain dimColor label={icon('\u{f005d}', '↑')} onPress={() => quiet(goUp($))} />}
         {rootNode && <Button key="home" plain dimColor label={icon('\u{f02dc}', '⌂')} onPress={() => quiet(goHome($))} />}
         <Button key="refresh" plain dimColor label={icon('\u{f0450}', '↻')} onPress={() => quiet(refresh($))} />
@@ -1258,6 +1309,9 @@ export const register: Register = (on, options) => {
           </Box>
           {ex.query ? <Button key="clearq" plain dimColor label={tier === 'plain' ? '×' : '\u{f0156}'} onPress={() => quiet(patchView($, () => ({ query: '' })))} /> : null}
         </Box>
+        {pending ? (
+          <Client key="pending" module="./rows.tsx" props={{ rows: [{ id: '', left: [{ t: pending + ' ', c: MUTED }, { t: '', spin: true, c: TITLE_COLOR }], right: [] }], active: '', activeBg: '', hoverBg: '', tones: TONES, spinner } satisfies RowsProps} />
+        ) : null}
         {!ex.setup && ex.nodes.length === 0 && <Text color={MUTED}>{ex.target ? 'nothing loaded yet' : HINT}</Text>}
         {ex.setup ? (
           <Client key="setup" module="./rows.tsx" props={{ rows: setupRows(ex.setup, tier, width), active: '', activeBg: '', hoverBg: '#2d2f33', tones: TONES, spinner } satisfies RowsProps} />
