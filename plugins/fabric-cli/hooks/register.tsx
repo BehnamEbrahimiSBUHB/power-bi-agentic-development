@@ -571,6 +571,10 @@ function skuLabel(sku: string): string {
   return trial ? `F${trial[1]}` : up
 }
 
+function shownName(n: TreeNode): string {
+  return n.kind === 'capacity' ? shortCapacity(n.name, capacitySku.get(n.sig.toLowerCase()) ?? '') : n.name
+}
+
 function shortCapacity(name: string, sku: string): string {
   const up = sku.trim().toUpperCase()
   if (/^FT/.test(up) || /^Trial-\d{8}T\d{6}Z-/.test(name)) return 'Fabric Trial'
@@ -698,7 +702,7 @@ function grouped(nodes: TreeNode[], on: boolean, byCapacity = false): TreeNode[]
   const useDomains = spaces.some(n => domainKey(n) && domainKey(n) !== 'none')
   if (!useDomains && !byCapacity) return withSettings(flat)
   const domainLabel = (k: string) => (k === 'none' ? 'No domain' : (domainName.get(k) ?? `Domain ${k.slice(0, 8)}`))
-  const capacityLabel = (k: string) => (k === 'none' ? 'No capacity (Pro workspaces)' : (capacityName.get(k) ?? `Capacity ${k.slice(0, 8)}`))
+  const capacityLabel = (k: string) => (k === 'none' ? 'No capacity (Pro workspaces)' : shortCapacity(capacityName.get(k) ?? `Capacity ${k.slice(0, 8)}`, capacitySku.get(k) ?? ''))
   const last = (a: string, b: string, none: boolean[]) => (none[0] ? 1 : none[1] ? -1 : a.localeCompare(b))
   const groups = new Map<string, TreeNode>()
   const counts = new Map<string, number>()
@@ -1151,7 +1155,7 @@ async function select($: EngineInterface, n: TreeNode): Promise<void> {
   })
   if (!isLeaf && (await expandFabric($, n, true))) await expandOpen($, n.id)
   if (n.kind === 'capacity' && /^[0-9a-f-]{36}$/i.test(n.sig)) {
-    await patchView($, cur => (cur.cursor === n.id ? { detail: [`capacity ${n.name}`, ...capacityDetail(n.sig)] } : {}))
+    await patchView($, cur => (cur.cursor === n.id ? { detail: [`capacity ${shownName(n)}`, ...capacityDetail(n.sig)] } : {}))
     return
   }
   const detail: string[] = [`${n.kind} ${n.name}`, ...(n.path ? [`fab path: ${n.path}`] : n.note && !GROUP_KINDS.has(n.kind) ? [n.note] : [])]
@@ -1621,7 +1625,7 @@ export const register: Register = (on, options) => {
       const cols = Math.max(4, width - r.depth * 2 - 6 - note.length)
       const isBright = brightSet.has(n.id) || (work !== null && busy !== '')
       const isDim = !isBright && dimSet.has(n.id)
-      const name = clip(n.name, cols)
+      const name = clip(shownName(n), cols)
       const faded = n.hidden || n.kind === 'placeholder' || n.kind === EMPTY
       const tone = work?.tone ?? 'orange'
       const left: Seg[] = [
@@ -1684,7 +1688,7 @@ export const register: Register = (on, options) => {
       const note = noteOf(r)
       const faded = n.hidden || n.kind === PLACEHOLDER || n.kind === EMPTY
       const room = Math.max(4, width - r.depth * 2 - 8 - note.length)
-      const label = clip(n.name, room)
+      const label = clip(shownName(n), room)
       const busy = busyTone(n.id)
       const spinning = n.kind === PLACEHOLDER && n.name === 'loading…'
       return (
