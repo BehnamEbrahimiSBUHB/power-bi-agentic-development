@@ -1,4 +1,5 @@
 import type { TreeNode } from '../types'
+import { visualLabel } from './icons'
 
 type Json = Record<string, any>
 
@@ -10,8 +11,8 @@ export type Io = {
   exists: (path: string) => Promise<boolean>
 }
 
-function node(id: string, parent: string, kind: string, name: string, path: string, sig = '', note = ''): TreeNode {
-  return { id, parent, kind, name, path, hidden: false, sig, note }
+function node(id: string, parent: string, kind: string, name: string, path: string, sig = '', note = '', file = ''): TreeNode {
+  return { id, parent, kind, name, path, hidden: false, sig, note, ...(file ? { file } : {}) }
 }
 
 function reason(err: unknown): string {
@@ -77,13 +78,13 @@ function fieldName(field: Json | undefined): string {
   return entity ? `${entity}.${prop}` : prop || '?'
 }
 
-function filters(list: Json[] | undefined, parent: string, base: string, kind: string): TreeNode[] {
+function filters(list: Json[] | undefined, parent: string, base: string, kind: string, file: string): TreeNode[] {
   if (!list?.length) return []
   const gid = `${parent}/filters`
-  const out = [node(gid, parent, 'group', `Filters (${list.length})`, '')]
+  const out = [node(gid, parent, 'group', `Filters (${list.length})`, '', '', '', file)]
   for (const f of list) {
     const name = fieldName(f.field)
-    out.push(node(`${gid}/${f.name}`, gid, kind, name, `${base}/${name}.Filter`, hash(JSON.stringify(f)), f.type ?? ''))
+    out.push(node(`${gid}/${f.name}`, gid, kind, name, `${base}/${name}.Filter`, hash(JSON.stringify(f)), f.type ?? '', file))
   }
   return out
 }
@@ -99,27 +100,25 @@ export async function loadReport(io: Io, dir: string): Promise<TreeNode[]> {
   if (!report) throw new Error(`not a PBIR report: ${dir}`)
   const rname = dir.split('/').pop() ?? 'Report'
   const root = 'R'
-  const out: TreeNode[] = [node(root, '', 'report', rname, rname, hash(JSON.stringify(report)))]
+  const out: TreeNode[] = [node(root, '', 'report', rname, rname, hash(JSON.stringify(report)), '', `${def}/report.json`)]
 
   const pbir = await json(io, dir, `${dir}/definition.pbir`)
   const ref = pbir?.datasetReference ?? {}
   const byPath: string = ref.byPath?.path ?? ''
-  const conn: string = ref.byConnection?.connectionString ?? ''
-  const modelName = byPath
-    ? (byPath.split(/[\\/]/).pop() ?? byPath).replace(/\.SemanticModel$/i, '')
-    : (conn.match(/initial catalog=([^;"]+)/i)?.[1] ?? conn.match(/semanticmodelid=([^;"]+)/i)?.[1] ?? ref.byConnection?.pbiModelDatabaseName ?? '')
+  const mref = modelRef(pbir)
+  const modelName = mref.name || mref.id
   if (modelName) {
-    out.push(node(`${root}/model`, root, 'semantic model', modelName, '', hash(JSON.stringify(ref)), byPath ? 'local model' : 'live connection'))
+    out.push(node(`${root}/model`, root, 'semantic model', modelName, '', hash(JSON.stringify(ref)), byPath ? 'local model' : 'live connection', `${dir}/definition.pbir`))
   }
   const theme = report.themeCollection?.customTheme?.name ?? report.themeCollection?.baseTheme?.name
-  if (theme) out.push(node(`${root}/theme`, root, 'theme', theme, `${rname}/${theme}.Theme`, hash(JSON.stringify(report.themeCollection))))
-  out.push(...filters(report.filterConfig?.filters, root, rname, 'reportfilter'))
+  if (theme) out.push(node(`${root}/theme`, root, 'theme', theme, `${rname}/${theme}.Theme`, hash(JSON.stringify(report.themeCollection)), '', themeFile(dir, report)))
+  out.push(...filters(report.filterConfig?.filters, root, rname, 'reportfilter', `${def}/report.json`))
 
   const meta = await json(io, dir, `${def}/pages/pages.json`)
   const folders = await dirs(io, dir, `${def}/pages`)
   const order: string[] = meta?.pageOrder ?? folders
   const pagesId = `${root}/pages`
-  out.push(node(pagesId, root, 'group', `Pages (${order.length})`, ''))
+  out.push(node(pagesId, root, 'group', `Pages (${order.length})`, '', '', '', meta ? `${def}/pages/pages.json` : `${def}/pages`))
   for (const pf of order) {
     const page = await json(io, dir, `${def}/pages/${pf}/page.json`)
     if (!page) continue
@@ -127,8 +126,9 @@ export async function loadReport(io: Io, dir: string): Promise<TreeNode[]> {
     const ppath = `${rname}/${page.displayName ?? pf}.Page`
     const active = meta?.activePageName === pf ? 'active' : ''
     const hidden = page.visibility === 'HiddenInViewMode'
-    out.push({ ...node(pid, pagesId, 'page', page.displayName ?? pf, ppath, hash(JSON.stringify(page)), active), hidden })
-    out.push(...filters(page.filterConfig?.filters, pid, ppath, 'pagefilter'))
+    const pfile = `${def}/pages/${pf}/page.json`
+    out.push({ ...node(pid, pagesId, 'page', page.displayName ?? pf, ppath, hash(JSON.stringify(page)), active, pfile), hidden })
+    out.push(...filters(page.filterConfig?.filters, pid, ppath, 'pagefilter', pfile))
     const vdir = `${def}/pages/${pf}/visuals`
     const vfolders = await dirs(io, dir, vdir)
     const visuals = await each(vfolders, READS, async vf => ({ vf, v: await json(io, dir, `${vdir}/${vf}/visual.json`) }))
@@ -139,21 +139,22 @@ export async function loadReport(io: Io, dir: string): Promise<TreeNode[]> {
       const type = v.visual?.visualType ?? (v.visualGroup ? 'group' : 'visual')
       const title = literal(v.visual?.visualContainerObjects?.title?.[0]?.properties?.text) || v.visualGroup?.displayName || ''
       const vpath = `${ppath}/${v.name ?? vf}.Visual`
+      const vfile = `${vdir}/${vf}/visual.json`
       const nodes: TreeNode[] = [
         {
-          ...node(vid, pid, 'visual', title ? `${title}` : type, vpath, hash(JSON.stringify(v)), title ? type : ''),
+          ...node(vid, pid, 'visual', title ? `${title}` : type, vpath, hash(JSON.stringify(v)), title ? type : '', vfile),
           hidden: v.isHidden === true,
         },
       ]
       for (const [role, st] of Object.entries((v.visual?.query?.queryState ?? {}) as Json)) {
         const rid = `${vid}/${role}`
-        nodes.push(node(rid, vid, 'data role', role, ''))
+        nodes.push(node(rid, vid, 'data role', role, '', '', '', vfile))
         for (const p of (st as Json).projections ?? []) {
           const ref = p.queryRef ?? fieldName(p.field)
-          nodes.push(node(`${rid}/${ref}`, rid, 'field', p.displayName ?? ref, vpath, '', p.displayName ? ref : ''))
+          nodes.push(node(`${rid}/${ref}`, rid, 'field', p.displayName ?? ref, vpath, '', p.displayName ? ref : '', vfile))
         }
       }
-      nodes.push(...filters(v.filterConfig?.filters, vid, vpath, 'visualfilter'))
+      nodes.push(...filters(v.filterConfig?.filters, vid, vpath, 'visualfilter', vfile))
       vis.push({ z: v.position?.z ?? 0, n: nodes })
     }
     vis.sort((a, b) => b.z - a.z)
@@ -164,10 +165,10 @@ export async function loadReport(io: Io, dir: string): Promise<TreeNode[]> {
   const files = (await entries(io, dir, bdir)).filter(e => e.name.endsWith('.bookmark.json'))
   if (files.length) {
     const bid = `${root}/bookmarks`
-    out.push(node(bid, root, 'group', `Bookmarks (${files.length})`, ''))
+    out.push(node(bid, root, 'group', `Bookmarks (${files.length})`, '', '', '', bdir))
     for (const f of files) {
       const b = await json(io, dir, `${bdir}/${f.name}`)
-      out.push(node(`${bid}/${f.name}`, bid, 'bookmark', b?.displayName ?? f.name, `${rname}/bookmark:${b?.name ?? f.name.replace(/\.bookmark\.json$/, '')}`, hash(JSON.stringify(b))))
+      out.push(node(`${bid}/${f.name}`, bid, 'bookmark', b?.displayName ?? f.name, `${rname}/bookmark:${b?.name ?? f.name.replace(/\.bookmark\.json$/, '')}`, hash(JSON.stringify(b)), '', `${bdir}/${f.name}`))
     }
   }
 
@@ -177,16 +178,56 @@ export async function loadReport(io: Io, dir: string): Promise<TreeNode[]> {
   )
   if (measures.length) {
     const xid = `${root}/ext`
-    out.push(node(xid, root, 'group', `Report measures (${measures.length})`, ''))
+    out.push(node(xid, root, 'group', `Report measures (${measures.length})`, '', '', '', `${def}/reportExtensions.json`))
     for (const { table, m } of measures)
-      out.push(node(`${xid}/${table}.${m.name}`, xid, 'ext measure', m.name, rname, hash(m.expression ?? ''), table))
+      out.push(node(`${xid}/${table}.${m.name}`, xid, 'ext measure', m.name, rname, hash(m.expression ?? ''), table, `${def}/reportExtensions.json`))
   }
   return out
 }
 
-export function reportDetail(n: TreeNode): string[] {
-  const lines = [`${n.kind} ${n.name}`]
-  if (n.path) lines.push(`pbir path: ${n.path}`)
-  if (n.note) lines.push(`note: ${n.note}`)
-  return lines
+const NOTE_LABEL: Record<string, string> = {
+  page: 'State',
+  'semantic model': 'Connection',
+  field: 'Field',
+  reportfilter: 'Filter type',
+  pagefilter: 'Filter type',
+  visualfilter: 'Filter type',
+  'ext measure': 'Table',
+}
+
+function themeFile(dir: string, report: Json): string {
+  const custom = report.themeCollection?.customTheme
+  const base = report.themeCollection?.baseTheme
+  if (custom?.name) return `${dir}/StaticResources/${custom.type === 'SharedResources' ? 'SharedResources' : 'RegisteredResources'}/${custom.name}`
+  if (base?.name) return `${dir}/StaticResources/SharedResources/BaseThemes/${base.name}.json`
+  return `${dir}/definition/report.json`
+}
+
+export type ModelRef = { workspace: string; id: string; name: string; local: string }
+
+export function modelRef(pbir: Json | null): ModelRef {
+  const ref = pbir?.datasetReference ?? {}
+  const local: string = ref.byPath?.path ?? ''
+  const conn: string = ref.byConnection?.connectionString ?? ''
+  const field = (key: string) => {
+    const m = conn.match(new RegExp(`${key}=("([^"]*)"|[^;]*)`, 'i'))
+    return (m?.[2] ?? m?.[1] ?? '').trim()
+  }
+  return {
+    workspace: (field('data source').match(/\/myorg\/(.+)$/i)?.[1] ?? '').trim(),
+    id: field('semanticmodelid') || (ref.byConnection?.pbiModelDatabaseName ?? ''),
+    name: local ? (local.split(/[\\/]/).pop() ?? local).replace(/\.SemanticModel$/i, '') : field('initial catalog'),
+    local,
+  }
+}
+
+export function reportDetail(n: TreeNode, dir: string): string[] {
+  const label = NOTE_LABEL[n.kind] ?? 'Note'
+  return [
+    `${n.kind} ${n.name}`,
+    ...(n.kind === 'visual' ? [`Visual type: ${visualLabel(n.note || n.name)}`] : n.note ? [`${label}: ${n.note}`] : []),
+    ...(n.path ? [`pbir path: ${n.path}`] : []),
+    ...(n.file ? [`File: ${rel(dir, n.file)}`] : []),
+    ...(n.hidden ? ['Hidden: yes'] : []),
+  ]
 }
