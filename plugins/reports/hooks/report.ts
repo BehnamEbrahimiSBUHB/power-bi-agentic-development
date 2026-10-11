@@ -111,7 +111,12 @@ export async function loadReport(io: Io, dir: string): Promise<TreeNode[]> {
     out.push(node(`${root}/model`, root, 'semantic model', modelName, '', hash(JSON.stringify(ref)), byPath ? 'local model' : 'live connection', `${dir}/definition.pbir`))
   }
   const theme = report.themeCollection?.customTheme?.name ?? report.themeCollection?.baseTheme?.name
-  if (theme) out.push(node(`${root}/theme`, root, 'theme', theme, `${rname}/${theme}.Theme`, hash(JSON.stringify(report.themeCollection)), '', themeFile(dir, report)))
+  if (theme) {
+    const tfile = themeFile(dir, report)
+    const tid = `${root}/theme`
+    out.push(node(tid, root, 'theme', theme, `${rname}/${theme}.Theme`, hash(JSON.stringify(report.themeCollection)), report.themeCollection?.customTheme?.name ? 'custom theme' : 'base theme', tfile))
+    out.push(...themeNodes(await json(io, dir, tfile).catch(() => null), tid, tfile))
+  }
   out.push(...filters(report.filterConfig?.filters, root, rname, 'reportfilter', `${def}/report.json`))
 
   const meta = await json(io, dir, `${def}/pages/pages.json`)
@@ -185,7 +190,106 @@ export async function loadReport(io: Io, dir: string): Promise<TreeNode[]> {
   return out
 }
 
+const HEX = /^#[0-9a-f]{3,8}$/i
+
+export function colorOf(v: unknown): string {
+  if (typeof v === 'string') return HEX.test(v.trim()) ? v.trim() : ''
+  const c = (v as Json | null | undefined)?.solid?.color
+  return typeof c === 'string' && HEX.test(c.trim()) ? c.trim() : ''
+}
+
+function shown(v: unknown): string {
+  const c = colorOf(v)
+  if (c) return c
+  if (v === null || v === undefined) return 'null'
+  if (typeof v !== 'object') return String(v)
+  const text = JSON.stringify(v)
+  return text.length > 60 ? text.slice(0, 59) + '…' : text
+}
+
+const PLURAL: Record<string, string> = { property: 'properties', class: 'classes' }
+
+function plural(n: number, word: string): string {
+  return `${n} ${n === 1 ? word : (PLURAL[word] ?? `${word}s`)}`
+}
+
+function themeProps(el: Json, parent: string, file: string): TreeNode[] {
+  return Object.entries(el)
+    .filter(([k]) => k !== '$id')
+    .map(([k, v]) => node(`${parent}/${k}`, parent, 'theme prop', k, '', hash(JSON.stringify(v)), shown(v), file))
+}
+
+function themeNodes(t: Json | null, tid: string, file: string): TreeNode[] {
+  if (!t || typeof t !== 'object') return []
+  const out: TreeNode[] = []
+  const data = (Array.isArray(t.dataColors) ? t.dataColors : []).filter((c: unknown): c is string => typeof c === 'string')
+  const named = Object.entries(t).filter((e): e is [string, string] => e[0] !== 'name' && typeof e[1] === 'string' && HEX.test(e[1].trim()))
+  if (data.length || named.length) {
+    const cid = `${tid}/colors`
+    out.push(node(cid, tid, 'theme colors', 'Colors', '', '', plural(data.length + named.length, 'color'), file))
+    if (data.length) {
+      const did = `${cid}/data`
+      out.push(node(did, cid, 'theme data colors', 'Data colors', '', hash(JSON.stringify(data)), plural(data.length, 'color'), file))
+      data.forEach((c: string, i: number) => out.push(node(`${did}/${i}`, did, 'theme color', `Color ${i + 1}`, '', hash(c), c, file)))
+    }
+    for (const [k, v] of named) out.push(node(`${cid}/${k}`, cid, 'theme color', k, '', hash(v), v.trim(), file))
+  }
+  const classes = t.textClasses && typeof t.textClasses === 'object' ? Object.entries(t.textClasses as Json) : []
+  if (classes.length) {
+    const xid = `${tid}/text`
+    out.push(node(xid, tid, 'theme text', 'Text classes', '', '', plural(classes.length, 'class'), file))
+    for (const [k, v] of classes) {
+      const style = (v ?? {}) as Json
+      const font = typeof style.fontFace === 'string' ? (style.fontFace.split(',')[0] ?? '').replace(/['"]/g, '').trim() : ''
+      const note = [font, style.fontSize !== undefined ? `${style.fontSize}pt` : '', colorOf(style.color)].filter(Boolean).join(' ')
+      out.push(node(`${xid}/${k}`, xid, 'text class', k, '', hash(JSON.stringify(v)), note, file))
+    }
+  }
+  const styles = t.visualStyles && typeof t.visualStyles === 'object' ? Object.entries(t.visualStyles as Json) : []
+  if (styles.length) {
+    const sid = `${tid}/styles`
+    out.push(node(sid, tid, 'theme styles', 'Visual styles', '', '', plural(styles.length, 'target'), file))
+    for (const [vtype, states] of styles) {
+      const vid = `${sid}/${vtype}`
+      const byState = states && typeof states === 'object' ? Object.entries(states as Json) : []
+      const cardsOf = (cards: unknown) => (cards && typeof cards === 'object' ? Object.entries(cards as Json) : [])
+      const count = byState.reduce((n, [, cards]) => n + cardsOf(cards).length, 0)
+      out.push(node(vid, sid, 'theme style', vtype === '*' ? 'All visuals' : vtype, '', hash(JSON.stringify(states)), vtype === '*' ? `* wildcard, ${plural(count, 'card')}` : plural(count, 'card'), file))
+      for (const [state, cards] of byState) {
+        const at = byState.length > 1 || state !== '*' ? `${vid}/${state}` : vid
+        if (at !== vid) out.push(node(at, vid, 'theme state', state === '*' ? 'All states' : state, '', hash(JSON.stringify(cards)), state === '*' ? '* wildcard' : '', file))
+        for (const [card, list] of cardsOf(cards)) {
+          const kid = `${at}/${card}`
+          const items = (Array.isArray(list) ? list : [list]).filter((x: unknown): x is Json => Boolean(x) && typeof x === 'object')
+          const props = items.reduce((n: number, el: Json) => n + Object.keys(el).filter(k => k !== '$id').length, 0)
+          out.push(node(kid, at, 'theme card', card === '*' ? 'All cards' : card, '', hash(JSON.stringify(list)), card === '*' ? `* wildcard, ${plural(props, 'property')}` : plural(props, 'property'), file))
+          if (items.length === 1 && items[0] && !items[0].$id) out.push(...themeProps(items[0], kid, file))
+          else
+            items.forEach((el: Json, i: number) => {
+              const eid = `${kid}/${i}`
+              out.push(node(eid, kid, 'theme selector', typeof el.$id === 'string' ? el.$id : `#${i + 1}`, '', hash(JSON.stringify(el)), plural(Object.keys(el).filter(k => k !== '$id').length, 'property'), file))
+              out.push(...themeProps(el, eid, file))
+            })
+        }
+      }
+    }
+  }
+  return out
+}
+
 const NOTE_LABEL: Record<string, string> = {
+  theme: 'Type',
+  'theme color': 'Color',
+  'theme prop': 'Value',
+  'text class': 'Style',
+  'theme colors': 'Count',
+  'theme data colors': 'Count',
+  'theme text': 'Count',
+  'theme styles': 'Count',
+  'theme style': 'Cards',
+  'theme state': 'State',
+  'theme card': 'Properties',
+  'theme selector': 'Properties',
   page: 'State',
   'semantic model': 'Connection',
   field: 'Field',
