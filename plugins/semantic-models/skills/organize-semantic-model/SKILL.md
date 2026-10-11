@@ -12,7 +12,8 @@ description: Organize a Power BI or Analysis Services semantic model end to end 
 - Tabular Editor 3 MCP: call `get_workspace_info` first and confirm the model title with the user if it is not the one they named. Read with `get_model_overview` and `get_object_details`; write with `execute_csharp_script`
 - `te` CLI (the `te-cli` skill) when there is no TE3 instance, for example against PBIP/TMDL on disk
 - One script per pass. Each `execute_csharp_script` call is one undo step and returns a property-level diff, so per-pass scripts keep every change reviewable and individually revertible
-- Read the returned diff after every script. Confirm each property you meant to set appears, and nothing you did not mean to touch. A property missing from the diff was already at that value
+- Read the returned diff after every script. Confirm each property you meant to set appears, and nothing you did not mean to touch. A property missing from the diff was already at that value, except annotations: the diff does not list annotation changes (`TableGroup`, `context`), so read those back with a second script
+- `execute_dax_query` only exists while the TE3 MCP server has model data read permission. If it disappears mid-session, the client's tool list is stale; reconnect the server (`/mcp`). A calculated table that was never recalculated returns no data until it is refreshed
 - Ask the user to close TE3 DAX editor tabs for objects a script will change. A script that edits an object while its editor is open and parsing has crashed TE3 (`IndexOutOfRangeException` in `ScrollbarIndicatorsController`)
 - Nothing is saved or deployed by the MCP. On a live connection, saving writes to the server, so leave saving to the user
 
@@ -36,7 +37,8 @@ Before changing anything:
 Title Case business names for tables, columns, measures and hierarchies (`Order Date`, `Net Sales`, `Days of Supply`), acronyms in capitals, no programming conventions, no technical prefixes, no unexplained abbreviations, and one consistent syntax for aggregations, units, periods and comparisons. The full rule set, the measure name construction order and the terminology questions to ask first are in `references/naming-rules.md`.
 
 - Conformed nomenclature: one concept, one word, everywhere. `Customer Key`, `Customer`, `Cust` for the same thing across tables collapse to one form; qualifiers that carry meaning (`Billing Date`, `Order Date`) stay. Pick singular or plural table names once
-- Calculated tables take their column names from the DAX expression. Rename those columns in the expression, not only on the column object, or the rename is lost on recalculation
+- Calculated table columns bind to the expression's output through `SourceColumn`. Renaming the column object is enough while `SourceColumn` still matches an expression column; when the expression's names change, keep `SourceColumn` in step or the column is dropped on recalculation
+- Renaming in Tabular Editor carries relationships, sort-by columns, hierarchy levels, translations and perspective membership along, and renames a calculated table's partition with the table
 - Before renaming, show the user the old-to-new map and warn that renames break report visuals, filters, bookmarks and field parameters bound to the old names. Pass 0 found the consumers; offer to rebind them with the `pbir-cli` skill (local PBIR) or `fabric-cli` (service). Do not apply renames to a model with bound reports without that go-ahead. `refactoring-renaming.md` in the `semantic-model` skill has the full procedure
 
 ## Pass 3: hierarchies
@@ -84,6 +86,8 @@ Each DAX calculated table and calculated column must justify itself in its descr
 ## Pass 12: DAX code
 
 - Format every measure, calculated column, calculated table, calculation item and function expression. In a TE script, `obj.FormatDax()` formats at the end of the script
+- Prefix every variable with `_` (`VAR _StartDate`) and every temporary column created by `ADDCOLUMNS`, `ROW`, `SELECTCOLUMNS` or `SUMMARIZECOLUMNS` with `@` (`"@BusinessDate"`, referenced as `[@BusinessDate]`), so neither can be mistaken for a model table or column
+- Apply TE3's code actions by hand. The editor shows them (DR001 to DR014, RW001 to RW003 on docs.tabulareditor.com/en/features/code-actions.html), but the MCP exposes neither the actions nor their lint markers, so an agent has to check for them: scalar predicates instead of `FILTER` on one column, aggregators instead of single-column iterators, `VALUES` instead of single-column `SUMMARIZE`, the two prefixes above, constant aggregations moved into variables, `DISTINCTCOUNT`, `COALESCE`, `ISBLANK`, `IN` instead of chained `||` equalities, no unused variables
 - Comment atypical logic inside the expression with `//`: a deliberate `ALL` that removes a filter users might expect to apply, a workaround for an engine quirk, a magic number's meaning. Do not comment the obvious
 
 ## Pass 13: user-defined functions
