@@ -532,7 +532,8 @@ const settingOf = new Map<string, Setting>()
 const TENANT = '#tenant'
 const TOGGLE = 'toggle:'
 const DETAILS_REGION = 'region:details'
-const desk = { active: false, from: null as number | null, lastFrom: 0, treeMax: 0, treeRoom: 0, detailFrom: 0, detailMax: 0, detailRoom: 0, page: 10, region: 'tree' as 'tree' | 'details' }
+const SLACK = 1
+const desk = { pinAsked: false, active: false, from: null as number | null, lastFrom: 0, treeMax: 0, treeRoom: 0, detailFrom: 0, detailMax: 0, detailRoom: 0, page: 10, region: 'tree' as 'tree' | 'details' }
 
 function clamp(n: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, n))
@@ -1346,7 +1347,7 @@ export const register: Register = (on, options) => {
       if (desk.region === 'details') desk.detailFrom = clamp(desk.detailFrom + step, 0, desk.detailMax)
       else desk.from = clamp((desk.from ?? desk.lastFrom) + step, 0, desk.treeMax)
       $.ui.invalidate('ui.render')
-      return {}
+      return e.contentRows - e.bodyRows >= SLACK * 2 ? next({ ...e, offset: SLACK }) : {}
     }
     const view = views.get('terminal') ?? views.get('desktop') ?? { from: 0, max: 0 }
     const ex = await get($)
@@ -1655,6 +1656,12 @@ export const register: Register = (on, options) => {
       desk.detailFrom = clamp(desk.detailFrom, 0, desk.detailMax)
       const treeFrom = clamp(desk.from ?? from, 0, desk.treeMax)
       desk.lastFrom = treeFrom
+      const offset = e.props.scroll?.offset ?? 0
+      if (offset === SLACK) desk.pinAsked = false
+      else if (!desk.pinAsked) {
+        desk.pinAsked = true
+        quiet($.ui.scroll({ to: { key: 'desk-body' }, in: PANE, block: 'start' }))
+      }
       const bar = (key: string, total: number, start: number, size: number) =>
         total <= size ? null : (
           <Box key={`${key}-box`} width={1} height={size} flexShrink={0}>
@@ -1662,7 +1669,8 @@ export const register: Register = (on, options) => {
           </Box>
         )
       return (
-        <Box flexDirection="column" height={body} overflow="hidden">
+        <Box flexDirection="column" height={body + SLACK * 2} overflow="hidden">
+          <Box height={SLACK} />
           <Box key="desk-body" height={1} flexDirection="row" alignItems="center">
             <Box flexGrow={1} flexShrink={1} flexDirection="row" alignItems="center" gap={1}>
               {icon16(FABRIC_SVG.fabric, 'Microsoft Fabric', { t: titleGlyph(tier), c: TITLE_COLOR }, 'logo')}
@@ -1715,6 +1723,7 @@ export const register: Register = (on, options) => {
               {bar('bar:details', detailLines.length, desk.detailFrom, detailRoom)}
             </Box>
           ) : null}
+          <Box height={SLACK} />
         </Box>
       )
     }
