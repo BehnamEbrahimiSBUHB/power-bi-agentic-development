@@ -1804,7 +1804,7 @@ export const register: Register = (on, options) => {
         <Box flexDirection="row" alignItems="center" marginTop={1} marginBottom={1} gap={1}>
           <Box flexGrow={1} flexShrink={1} width="100%">
             {work && !ex.query ? (
-              <Client key="working" module="./rows.tsx" props={{ rows: [{ id: '', left: [{ t: 'Claude is working in Fabric...', sh: work.tone }], right: [] }], active: '', activeBg: '', hoverBg: '', tones: TONES } satisfies RowsProps} />
+              <Client key="working" module="./rows.tsx" props={{ rows: [{ id: '', left: [{ t: '', claude: true }, { t: ' Claude is working in Fabric...', sh: 'orange' }], right: [] }], active: '', activeBg: '', hoverBg: '', tones: TONES } satisfies RowsProps} />
             ) : (
               <Input
                 key="q"

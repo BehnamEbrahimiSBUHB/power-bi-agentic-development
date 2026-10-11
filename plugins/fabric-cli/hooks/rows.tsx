@@ -1,6 +1,6 @@
 import type { ClientModule } from 'claude-code'
 
-export type Seg = { t: string; c?: string; b?: boolean; s?: boolean; i?: boolean; sh?: string; dim?: boolean; one?: boolean; spin?: boolean; bg?: string; tab?: string }
+export type Seg = { t: string; c?: string; b?: boolean; s?: boolean; i?: boolean; sh?: string; dim?: boolean; one?: boolean; spin?: boolean; claude?: boolean; bg?: string; tab?: string }
 export type RowSpec = { id: string; left: Seg[]; right: Seg[] }
 export type RowsProps = {
   rows: RowSpec[]
@@ -15,6 +15,7 @@ type Local = { hover: number; phase: number; drag: boolean; ref: { stop?: () => 
 
 const TICK_MS = 90
 const FRAMES = ['O  ', 'oO ', '.oO', ' .O', '  O', ' Oo', 'Oo.', 'O. ']
+const CLAUDE = ['▐▛███▜▌ ', '▐▛███▜▌ ', '▐▛███▜▌ ', ' ▐▛███▜▌', ' ▐▛███▜▌', ' ▐▛███▜▌', '▐▛███▜▌ ', '▐▛███▜▌ ', '▐█████▌ ', '▐▛███▜▌ ', '▐▛███▜▌ ', '▐▛███▜▌ ']
 const GRADIENT = ['#5eead4', '#67e8f9', '#7dd3fc', '#93c5fd', '#a5b4fc', '#c4b5fd', '#d8b4fe', '#f0abfc', '#d8b4fe', '#c4b5fd', '#a5b4fc', '#93c5fd', '#7dd3fc', '#67e8f9']
 
 function shimmer(i: number, phase: number, len: number, palette: string[]): string {
@@ -30,7 +31,7 @@ const Rows: ClientModule<RowsProps, Local> = (props, surface) => {
     state = { hover: -1, phase: 0, drag: false, ref: {} }
     surface.setState(state)
   }
-  const lit = props.rows.some(r => r.left.some(s => s.sh || s.spin) || r.right.some(s => s.sh || s.spin))
+  const lit = props.rows.some(r => r.left.some(s => s.sh || s.spin || s.claude) || r.right.some(s => s.sh || s.spin || s.claude))
   if (lit && !state.ref.stop) {
     state.ref.stop = surface.every(TICK_MS, () => {
       const cur = surface.state
@@ -82,6 +83,13 @@ const Rows: ClientModule<RowsProps, Local> = (props, surface) => {
   })
   surface.onKey(e => surface.post({ key: e.key, ctrl: Boolean(e.ctrl), shift: Boolean(e.shift) }))
   const draw = (s: Seg, k: number) => {
+    if (s.claude) {
+      return (
+        <Text key={String(k)} color="#d97757">
+          {CLAUDE[Math.floor(state.phase / 2) % CLAUDE.length] ?? ''}
+        </Text>
+      )
+    }
     if (s.spin) {
       const frame = FRAMES[state.phase % FRAMES.length] ?? ''
       return (
