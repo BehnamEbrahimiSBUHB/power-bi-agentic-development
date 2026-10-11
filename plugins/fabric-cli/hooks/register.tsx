@@ -6,6 +6,7 @@ import { glyph, type Tier } from './icons'
 import { FABRIC_SVG } from './svg-data'
 import { SETTING_DOCS } from './setting-data'
 import type { RowSpec, RowsProps, Seg } from './rows'
+import type { ZoneProps } from './zone'
 import { ancestors, EMPTY, empty, emptyMark, isLoaded, merge, type Row, visible } from './tree'
 import { inOneLake, modelOf, parseChildren, parseOneLake, parseWorkspaces, PLACEHOLDER, typeLabel } from './fabric'
 import { FAB_TONE, type FabKind, fabCalls, fabGuids, fabKind, fabPositionals, fabWorkspaces, type Invocation, invocations, join, modelFromConnection, posix, queryOf, targetLabel, tokenize, useDrives } from './parse'
@@ -531,6 +532,7 @@ function skuLabel(sku: string): string {
 type Setting = { settingName: string; title?: string; enabled?: boolean; tenantSettingGroup?: string; canSpecifySecurityGroups?: boolean; delegateToWorkspace?: boolean; delegateToCapacity?: boolean; delegateToDomain?: boolean; enabledSecurityGroups?: { name?: string }[]; excludedSecurityGroups?: { name?: string }[] }
 const settingOf = new Map<string, Setting>()
 const TENANT = '#tenant'
+const TOGGLE = 'toggle:'
 const optimistic = new Map<string, boolean>()
 let pressedCursor = ''
 const TENANT_CLOSED = '#tenant-closed'
@@ -1219,6 +1221,20 @@ export const register: Register = (on, options) => {
   })
 
   on('ui.message', async ($, e, next) => {
+    if (e.requestId === PANE && e.element.startsWith('z:') && e.data && typeof e.data === 'object') {
+      const data = e.data as { zone?: unknown; ctrl?: unknown; shift?: unknown }
+      const id = typeof data.zone === 'string' ? data.zone : ''
+      if (id === `${TOGGLE}domains`) quiet(toggleDomains($))
+      else if (id === `${TOGGLE}capacities`) quiet(toggleCapacity($))
+      else if (id) {
+        const ex = withOptimistic(await get($))
+        const row = treeRows(ex).find(r => r.node.id === id)
+        if (row && data.ctrl) quiet(openWeb($, ex, row.node))
+        else if (row && data.shift) quiet(openLocal($, ex, row.node))
+        else if (row) pressNow($, row.node, row)
+      }
+      return {}
+    }
     if (e.requestId === PANE && e.element === 'setup' && e.data && typeof e.data === 'object') {
       const data = e.data as { press?: unknown; tab?: unknown; copy?: unknown }
       const pick = [data.tab, data.press, data.copy].find((v): v is string => typeof v === 'string') ?? ''
@@ -1416,7 +1432,7 @@ export const register: Register = (on, options) => {
       const busy = busyTone(n.id)
       const spinning = n.kind === PLACEHOLDER && n.name === 'loading…'
       return (
-        <Box key={`n:${n.id}`} flexDirection="row" alignItems="center" backgroundColor={n.id === ex.cursor ? '#2a2d34' : undefined} hover={{ backgroundColor: '#232529' }}>
+        <Box key={`n:${n.id}`} position="relative" flexDirection="row" alignItems="center" backgroundColor={n.id === ex.cursor ? '#2a2d34' : undefined} hover={{ backgroundColor: '#232529' }}>
           {r.depth > 0 && Svg ? (
             <Svg key={`g:${n.id}`} source={guides(r.depth)} alt={`level ${r.depth}`} width={r.depth * 16} height={ROW_PX} />
           ) : (
@@ -1427,30 +1443,38 @@ export const register: Register = (on, options) => {
             ))
           )}
           <Box width={2} flexShrink={0} flexDirection="row" alignItems="center">
-            {r.leaf ? null : <Button key={`c:${n.id}`} plain dimColor label={r.open ? '⌄' : '›'} onPress={() => pressNow($, n, r)} />}
+            {r.leaf ? null : icon16(FABRIC_SVG[r.open ? 'ui:chevron-down' : 'ui:chevron-right'], r.open ? 'collapse' : 'expand', { t: r.open ? '⌄' : '›', c: MUTED }, `c:${n.id}`)}
           </Box>
           <Box flexDirection="row" alignItems="center" gap={1} flexShrink={1}>
             {spinning ? null : icon16(FABRIC_SVG[n.kind] ?? (n.kind === 'tenant setting' ? FABRIC_SVG[n.note.startsWith('On') ? 'ui:on' : 'ui:off'] : undefined), typeLabel(n.kind), { t: g.char, c: g.color }, `i:${n.id}`)}
             {spinning ? (
               <Client key={`ph:${n.id}`} module="./rows.tsx" props={{ rows: [{ id: '', left: [{ t: '', spin: true, c: MUTED }, { t: ' Loading…', c: MUTED }], right: [] }], active: '', activeBg: '', hoverBg: '', tones: TONES, spinner } satisfies RowsProps} />
-            ) : faded ? (
-              <Text color={MUTED}>{n.name}</Text>
             ) : (
-              <Button key={`r:${n.id}`} plain label={label} onPress={() => pressNow($, n, r)} />
+              <Text color={faded ? MUTED : undefined} wrap="truncate-end">{faded ? n.name : label}</Text>
             )}
             {busy ? <Text color={TONES[busy]?.bright[1]}>…</Text> : null}
           </Box>
           <Box flexGrow={1} />
           {note ? <Text color={MUTED}>{note}</Text> : null}
+          {faded ? null : (
+            <Box position="absolute" top={0} left={0} right={0} bottom={0}>
+              <Client key={`z:${n.id}`} module="./zone.tsx" props={{ id: n.id } satisfies ZoneProps} width="100%" height="100%" />
+            </Box>
+          )}
         </Box>
       )
     }
     const dimmed = (source: string | undefined) => source?.replace(/#[0-9a-fA-F]{6}/g, '#5c5c66')
     const toggle = (key: string, isOn: boolean, svg: string, what: string, nerd: string, plain: string, run: () => void) =>
       native ? (
-        <Box key={`tg:${key}`} flexDirection="row" alignItems="center" gap={1} paddingX={1} backgroundColor={isOn ? '#2a2d34' : undefined} hover={{ backgroundColor: isOn ? '#323640' : '#232529' }}>
-          {icon16(isOn ? FABRIC_SVG[svg] : dimmed(FABRIC_SVG[svg]), what, { t: plain, c: MUTED }, `ti:${key}`)}
-          <Button key={key} plain dimColor={!isOn} label={what[0]!.toUpperCase() + what.slice(1)} onPress={run} />
+        <Box key={`tg:${key}`} position="relative" flexDirection="row" alignItems="center" paddingX={1} backgroundColor={isOn ? '#2f3540' : undefined} hover={{ backgroundColor: isOn ? '#38404d' : '#26282d' }}>
+          {icon16(isOn ? FABRIC_SVG[svg] : dimmed(FABRIC_SVG[svg]), `${isOn ? 'Hide' : 'Show'} ${what}`, { t: plain, c: MUTED }, `ti:${key}`)}
+          <Box position="absolute" top={0} left={0} right={0} bottom={0}>
+            <Client key={`z:${TOGGLE}${key}`} module="./zone.tsx" props={{ id: `${TOGGLE}${key}` } satisfies ZoneProps} width="100%" height="100%" />
+          </Box>
+          <Box position="absolute" top={1} right={0} display="none" hover={{ display: 'flex' }} backgroundColor="#2b2b31" paddingX={1}>
+            <Text>{`${isOn ? 'Hide' : 'Show'} ${what}`}</Text>
+          </Box>
         </Box>
       ) : (
         <Button key={key} plain dimColor={!isOn} label={`${icon(nerd, plain)} `} onPress={run} />
@@ -1503,6 +1527,7 @@ export const register: Register = (on, options) => {
               <Client key="head" module="./rows.tsx" props={{ rows: [head], active: '', activeBg: '', hoverBg: '', tones: TONES, spinner } satisfies RowsProps} />
             )}
           </Box>
+          {native ? toggles : null}
         </Box>
         <Box flexDirection="row" alignItems="center" marginTop={1} marginBottom={1} gap={1}>
           <Box flexGrow={1} flexShrink={1} width="100%">
@@ -1520,7 +1545,7 @@ export const register: Register = (on, options) => {
             )}
           </Box>
           {ex.query ? <Button key="clearq" plain dimColor label={tier === 'plain' ? '×' : '\u{f0156}'} onPress={() => quiet(patchView($, () => ({ query: '' })))} /> : null}
-          {toggles}
+          {native ? null : toggles}
         </Box>
         {pending ? (
           <Client key="pending" module="./rows.tsx" props={{ rows: [{ id: '', left: [{ t: pending + ' ', c: MUTED }, { t: '', spin: true, c: TITLE_COLOR }], right: [] }], active: '', activeBg: '', hoverBg: '', tones: TONES, spinner } satisfies RowsProps} />
