@@ -523,12 +523,9 @@ const SETTINGS_INDEX = 'https://learn.microsoft.com/fabric/admin/tenant-settings
 function skuLabel(sku: string): string {
   const up = sku.trim().toUpperCase()
   if (!up) return ''
-  if (up === 'PP3') return 'Premium Per User'
-  if (up === 'EM' || /^A\d+$/.test(up)) return 'Embedded'
-  if (/^P\d+$/.test(up)) return `Premium ${up}`
-  if (/^F\d+$/.test(up)) return `Fabric ${up}`
-  if (/^FT\d+$/.test(up)) return 'Fabric trial'
-  return sku.trim()
+  if (up === 'PP3') return 'PPU'
+  if (/^FT/.test(up)) return 'Trial'
+  return up
 }
 type Setting = { settingName: string; title?: string; enabled?: boolean; tenantSettingGroup?: string; canSpecifySecurityGroups?: boolean; delegateToWorkspace?: boolean; delegateToCapacity?: boolean; delegateToDomain?: boolean; enabledSecurityGroups?: { name?: string }[]; excludedSecurityGroups?: { name?: string }[] }
 const settingOf = new Map<string, Setting>()
@@ -668,10 +665,15 @@ function grouped(nodes: TreeNode[], on: boolean, byCapacity = false): TreeNode[]
   const sorted = [...groups.values()]
     .map(g => ({
       ...g,
-      note: [g.kind === 'capacity' ? skuLabel(capacitySku.get(g.sig) ?? '') : '', g.kind === 'capacity' && paused(g.sig) ? 'paused' : '', plural(counts.get(g.id) ?? 0, 'workspace')].filter(Boolean).join(' · '),
+      note: [g.kind === 'capacity' ? skuLabel(capacitySku.get(g.sig) ?? '') : '', plural(counts.get(g.id) ?? 0, 'workspace')].filter(Boolean).join(' - '),
     }))
     .sort((a, b) => last(a.name, b.name, [a.sig === 'none', b.sig === 'none']))
   return withSettings([...sorted, ...placed])
+}
+
+function runState(n: TreeNode): 'paused' | 'running' | '' {
+  if (n.kind !== 'capacity' || !capacityState.has(n.sig.toLowerCase())) return ''
+  return paused(n.sig) ? 'paused' : 'running'
 }
 
 function paused(capacity: string): boolean {
@@ -714,7 +716,7 @@ function scoped(s: Setting): boolean {
 }
 
 function stateOf(s: Setting): string {
-  return s.enabled ? (scoped(s) ? 'On · scoped' : 'On') : 'Off'
+  return s.enabled ? (scoped(s) ? 'On - scoped' : 'On') : 'Off'
 }
 
 function settingDocs(name: string): string {
@@ -1448,7 +1450,9 @@ export const register: Register = (on, options) => {
         isBright || isDim ? { t: name, sh: tone, dim: isDim, b: isBright } : { t: name, c: faded ? '#6e6e7a' : g.label, b: n.id === ex.selected },
       ]
       if (busy) left.push(spin(busy))
-      return { id: n.kind === 'placeholder' || n.kind === EMPTY ? '' : n.id, left: clean(left), right: note ? [{ t: note, c: '#6e6e7a' }] : [] }
+      const run = runState(n)
+      const state: Seg[] = run ? [{ t: (tier === 'plain' ? (run === 'paused' ? '‖' : '▸') : run === 'paused' ? '\u{f03e4}' : '\u{f040a}') + ' ', c: run === 'paused' ? '#d9a54a' : '#5cc28a' }] : []
+      return { id: n.kind === 'placeholder' || n.kind === EMPTY ? '' : n.id, left: clean(left), right: [...state, ...(note ? [{ t: note, c: '#6e6e7a' }] : [])] }
     }
     const note = (text: string): RowSpec => ({ id: '', left: [{ t: text, c: '#6e6e7a' }], right: [] })
     const specs: RowSpec[] = [...pinned.map(rowSpec), ...(pinned.length > 0 ? [note('  ⋮')] : []), ...shown.map(rowSpec)]
@@ -1512,6 +1516,7 @@ export const register: Register = (on, options) => {
             {busy ? <Text color={TONES[busy]?.bright[1]}>…</Text> : null}
           </Box>
           <Box flexGrow={1} />
+          {runState(n) ? icon16(FABRIC_SVG[runState(n) === 'paused' ? 'ui:pause' : 'ui:play'], runState(n), { t: '', c: MUTED }, `st:${n.id}`) : null}
           {note ? <Text color={MUTED}>{note}</Text> : null}
           {faded ? null : (
             <Box position="absolute" top={0} left={0} right={0} bottom={0}>
