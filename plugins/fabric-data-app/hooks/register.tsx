@@ -144,7 +144,7 @@ function viewApp(app: AppInfo): AppInfo {
   const names = [app.key, app.name].filter(Boolean).map(n => n.toLowerCase())
   const own = (type: string) => items.find(i => i.type === type && names.includes(i.name.toLowerCase()))
   const sources = app.sources.map(src => {
-    if (src.item) return src
+    if (src.item) return src.workspace || !items.some(i => i.id.toLowerCase() === src.item?.toLowerCase()) ? src : { ...src, workspace: app.workspace }
     const hit = (OWN_KINDS as readonly string[]).includes(src.kind) ? own(src.kind) : items.find(i => i.type === src.kind && i.name.toLowerCase() === src.name.toLowerCase())
     return hit ? { ...src, item: hit.id, workspace: app.workspace } : src
   })
@@ -158,7 +158,7 @@ function viewApp(app: AppInfo): AppInfo {
 }
 
 function sourceUrl(app: AppInfo, src: Source): string {
-  return src.item ? itemUrl(src.workspace || app.workspace, src.kind, src.item, app.tenant) : ''
+  return src.item && src.workspace ? itemUrl(src.workspace, src.kind, src.item, app.tenant) : ''
 }
 
 function sourceAt(apps: AppInfo[], id: string): { app: AppInfo; src: Source; child: string } | null {
@@ -986,7 +986,10 @@ async function startup($: EngineInterface, detect: boolean): Promise<void> {
   const apps = await discover($, t.root || cwd)
   if (apps.length) {
     if (!t.root || t.nodes.length === 0) await reset($, t.root || cwd, false, apps)
-    else await openPane($, { id: PANE, title: titleOf(t.root || cwd) })
+    else {
+      await syncApps($, apps)
+      await openPane($, { id: PANE, title: titleOf(t.root || cwd) })
+    }
   }
 }
 
@@ -1212,7 +1215,7 @@ export const register: Register = (on, options) => {
         `${KIND_LABEL[picked.src.kind] ?? picked.src.kind}: ${picked.child || picked.src.name}${picked.child ? ` in ${picked.src.name}` : ''}`,
         `app: ${picked.app.title} (${picked.app.cli}) at ${picked.app.dir}`,
       )
-      if (picked.src.item) lines.push(`deployed item: workspace ${picked.src.workspace || picked.app.workspace}, item ${picked.src.item}`)
+      if (picked.src.item) lines.push(`deployed item: ${picked.src.workspace ? `workspace ${picked.src.workspace}, ` : ''}item ${picked.src.item}`)
     } else if (app) {
       lines.push(
         t.selected === app.dir
@@ -1286,7 +1289,7 @@ export const register: Register = (on, options) => {
       const { app, src, child } = selSource
       const label = KIND_LABEL[src.kind] ?? src.kind
       const childKind = src.kind === 'UserDataFunction' ? 'function' : 'table'
-      const ws = src.workspace || (src.item ? app.workspace : '')
+      const ws = src.workspace ?? ''
       const g = glyphFor(child ? childKind : src.kind, tier)
       heading = { char: g.char, color: g.color, svg: child ? '' : src.kind }
       detail = [
