@@ -556,6 +556,8 @@ type Setting = { settingName: string; title?: string; enabled?: boolean; tenantS
 const settingOf = new Map<string, Setting>()
 const TENANT = '#tenant'
 const TOGGLE = 'toggle:'
+const PROPS = 'props:toggle'
+let propsOpen = true
 const TOGGLE_COLOR: Record<string, string> = { domains: '#c4b5fd', capacities: '#5eead4' }
 
 let nativeScroll = false
@@ -1299,6 +1301,11 @@ export const register: Register = (on, options) => {
     if (e.requestId === PANE && e.element.startsWith('z:') && e.data && typeof e.data === 'object') {
       const data = e.data as { zone?: unknown; ctrl?: unknown; shift?: unknown }
       const id = typeof data.zone === 'string' ? data.zone : ''
+      if (id === PROPS) {
+        propsOpen = !propsOpen
+        $.ui.invalidate('ui.render')
+        return {}
+      }
       if (id === `${TOGGLE}domains`) quiet(toggleDomains($))
       else if (id === `${TOGGLE}capacities`) quiet(toggleCapacity($))
       else if (id) {
@@ -1612,72 +1619,85 @@ export const register: Register = (on, options) => {
           {child as never}
         </Box>
       )
-      const detailLines = shownNode && ex.detail.length > 0
+      const at = shownNode ? rows.findIndex(r => r.node.id === shownNode.id) : -1
+      const depth = at >= 0 ? rows[at]!.depth + 1 : 1
+      const lead = (d: number, key: string) => (Svg ? <Svg key={key} source={guides(d)} alt={`level ${d}`} width={d * 16} height={ROW_PX} /> : <Box key={key} width={d * 2} />)
+      const propRow = (key: string, d: number, child: unknown) => (
+        <Box key={key} height={1} overflow="hidden" flexDirection="row" alignItems="center" gap={1}>
+          {lead(d, `${key}:g`)}
+          {child as never}
+        </Box>
+      )
+      const propLines = shownNode && ex.detail.length > 0
         ? [
-            line(
-              'd:head',
-              <Box flexDirection="row" alignItems="center" gap={1} flexGrow={1}>
-                {icon16(FABRIC_SVG[shownNode.kind], typeLabel(shownNode.kind), { t: glyph(shownNode, tier).char, c: glyph(shownNode, tier).color }, 'sel')}
-                <Text bold wrap="truncate-end">{shownNode.name}</Text>
-              </Box>,
-            ),
-            line('d:gap', <Text> </Text>),
-            ...details.map((d, i) =>
-              line(
-                `d:p:${i}`,
-                <Box position="relative" flexDirection="row" gap={1} flexGrow={1}>
-                  <Box width={12} flexShrink={0}>
-                    <Text color={MUTED}>{d.key}</Text>
-                  </Box>
-                  <Box flexShrink={1}>
-                    <Text wrap="truncate-end">{d.value}</Text>
-                  </Box>
-                </Box>,
-              ),
-            ),
-            ...(pathed || shownNode.kind === 'tenant setting' ? [line('d:rule', <Text color="#2e2e34">{'─'.repeat(400)}</Text>)] : []),
-            ...(shownNode.kind === 'tenant setting'
+            <Box key="pr:head" position="relative" height={1} overflow="hidden" flexDirection="row" alignItems="center" gap={1} hover={{ backgroundColor: '#232529' }}>
+              {lead(depth, 'pr:head:g')}
+              {icon16(FABRIC_SVG[propsOpen ? 'ui:chevron-down' : 'ui:chevron-right'], propsOpen ? 'collapse' : 'expand', { t: propsOpen ? '⌄' : '›', c: MUTED }, 'pr:chev')}
+              {icon16(FABRIC_SVG['tenant settings'], 'Properties', { t: '⚙', c: MUTED }, 'pr:icon')}
+              <Text color={MUTED}>Properties</Text>
+              <Box position="absolute" top={0} left={0} right={0} bottom={0}>
+                <Client key={`z:${PROPS}`} module="./zone.tsx" props={{ id: PROPS } satisfies ZoneProps} width="100%" height="100%" />
+              </Box>
+            </Box>,
+            ...(propsOpen
               ? [
-                  line(
-                    'd:docs',
-                    <Box flexDirection="row" alignItems="center" gap={1}>
-                      {icon16(FABRIC_SVG['ui:open'], 'Open docs', { t: '', c: MUTED }, 'ai:docs')}
-                      <Button key="docs" plain label="Open docs" onPress={() => quiet(openUrl($, settingDocs(shownNode.sig)))} />
-                    </Box>,
-                  ),
-                ]
-              : []),
-            ...(pathed
-              ? [
-                  line(
-                    'd:actions',
-                    <Box flexDirection="row" alignItems="center" gap={2}>
-                      {actions.map(a => (
-                        <Box key={`a:${a.key}`} flexDirection="row" alignItems="center" gap={1}>
-                          {icon16(FABRIC_SVG[a.svg], a.label, { t: '', c: MUTED }, `ai:${a.key}`)}
-                          <Button key={a.key} plain label={a.label} onPress={a.run} />
+                  ...details.map((d, i) =>
+                    propRow(
+                      `pr:p:${i}`,
+                      depth + 1,
+                      <Box flexDirection="row" gap={1} flexGrow={1} flexShrink={1}>
+                        <Box width={12} flexShrink={0}>
+                          <Text color={MUTED}>{d.key}</Text>
                         </Box>
-                      ))}
-                      <Box key="a:copy" flexDirection="row" alignItems="center" gap={1}>
-                        {icon16(FABRIC_SVG['ui:copy'], 'Copy', { t: '', c: MUTED }, 'ai:copy')}
-                        <Button key="copy" plain label="Copy path" onPress={p => quiet(copyOf($, pathed.path, p.surface))} />
-                      </Box>
-                    </Box>,
+                        <Box flexShrink={1}>
+                          <Text wrap="truncate-end">{d.value}</Text>
+                        </Box>
+                      </Box>,
+                    ),
                   ),
+                  ...(shownNode.kind === 'tenant setting'
+                    ? [
+                        propRow(
+                          'pr:docs',
+                          depth + 1,
+                          <Box flexDirection="row" alignItems="center" gap={1}>
+                            {icon16(FABRIC_SVG['ui:open'], 'Open docs', { t: '', c: MUTED }, 'ai:docs')}
+                            <Button key="docs" plain label="Open docs" onPress={() => quiet(openUrl($, settingDocs(shownNode.sig)))} />
+                          </Box>,
+                        ),
+                      ]
+                    : []),
+                  ...(pathed
+                    ? [
+                        propRow(
+                          'pr:actions',
+                          depth + 1,
+                          <Box flexDirection="row" alignItems="center" gap={2}>
+                            {actions.map(a => (
+                              <Box key={`a:${a.key}`} flexDirection="row" alignItems="center" gap={1}>
+                                {icon16(FABRIC_SVG[a.svg], a.label, { t: '', c: MUTED }, `ai:${a.key}`)}
+                                <Button key={a.key} plain label={a.label} onPress={a.run} />
+                              </Box>
+                            ))}
+                            <Box key="a:copy" flexDirection="row" alignItems="center" gap={1}>
+                              {icon16(FABRIC_SVG['ui:copy'], 'Copy', { t: '', c: MUTED }, 'ai:copy')}
+                              <Button key="copy" plain label="Copy path" onPress={p => quiet(copyOf($, pathed.path, p.surface))} />
+                            </Box>
+                          </Box>,
+                        ),
+                      ]
+                    : []),
                 ]
               : []),
           ]
         : []
       const headRows = 4 + (pending ? 1 : 0) + (!ex.setup && ex.nodes.length === 0 ? 1 : 0)
-      const panelRows = detailLines.length ? Math.min(detailLines.length + 1, Math.max(6, Math.floor(body * 0.45))) : 0
-      const lines = rows.map(nativeRow)
+      const lines = at >= 0 ? rows.flatMap((r, i) => (i === at ? [nativeRow(r), ...propLines] : [nativeRow(r)])) : rows.map(nativeRow)
       const offset = e.props.scroll?.offset ?? 0
       const first = Math.max(0, offset - headRows - body)
       const last = Math.min(lines.length, offset - headRows + body * 2)
-      const total = Math.max(body, headRows + lines.length + panelRows)
-      const panelTop = Math.min(offset + body, total) - panelRows
       return (
-        <Box flexDirection="column" position="relative" height={total}>
+        <Box flexDirection="column">
           <Box key="desk-body" height={1} flexDirection="row" alignItems="center">
             <Box flexGrow={1} flexShrink={1} flexDirection="row" alignItems="center" gap={1}>
               {icon16(FABRIC_SVG.fabric, 'Microsoft Fabric', { t: titleGlyph(tier), c: TITLE_COLOR }, 'logo')}
@@ -1717,14 +1737,6 @@ export const register: Register = (on, options) => {
               {last < lines.length ? <Box key="below" height={lines.length - Math.max(first, last)} /> : null}
             </Box>
           )}
-          {panelRows ? (
-            <Box key="panel" position="absolute" top={panelTop} left={0} right={0} height={panelRows} flexDirection="column" overflow="hidden" backgroundColor="#1b1c20">
-              <Box key="panel-rule" height={1} overflow="hidden">
-                <Text color="#2e2e34">{'─'.repeat(400)}</Text>
-              </Box>
-              {detailLines.slice(0, panelRows - 1)}
-            </Box>
-          ) : null}
         </Box>
       )
     }
