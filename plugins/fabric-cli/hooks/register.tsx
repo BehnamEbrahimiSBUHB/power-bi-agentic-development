@@ -534,6 +534,32 @@ const capacityName = new Map<string, string>()
 let tenantName = ''
 let tenantId = ''
 const capacityState = new Map<string, string>()
+const capacityInfo = new Map<string, { name: string; region: string; subscription: string; group: string }>()
+
+function capacityDetail(id: string): string[] {
+  const info = capacityInfo.get(id.toLowerCase())
+  const sku = capacitySku.get(id.toLowerCase()) ?? ''
+  const state = capacityState.get(id.toLowerCase()) ?? ''
+  return [
+    ...(info ? [`Name: ${info.name}`] : []),
+    `ID: ${id}`,
+    ...(sku ? [`SKU: ${skuLabel(sku)}${skuLabel(sku) === sku ? '' : ` (${sku})`}`] : []),
+    ...(state ? [`State: ${state === 'Active' ? 'Running' : state === 'Inactive' ? 'Paused' : state}`] : []),
+    ...(info?.region ? [`Region: ${info.region}`] : []),
+    ...(info?.group ? [`Resource group: ${info.group}`] : []),
+  ]
+}
+
+function azureLinks(id: string): { cost: string; resource: string } | null {
+  const info = capacityInfo.get(id.toLowerCase())
+  if (!info?.subscription || !info.group) return null
+  const at = tenantId ? `@${tenantId}/` : ''
+  const group = `/subscriptions/${info.subscription}/resourceGroups/${info.group}`
+  return {
+    cost: `https://portal.azure.com/${at}#blade/Microsoft_Azure_CostManagement/Menu/open/costanalysis/scope/${encodeURIComponent(group)}`,
+    resource: `https://portal.azure.com/#${at}resource${group}/providers/Microsoft.Fabric/capacities/${encodeURIComponent(info.name)}/overview`,
+  }
+}
 const capacitySku = new Map<string, string>()
 const SETTINGS_INDEX = 'https://learn.microsoft.com/fabric/admin/tenant-settings-index'
 
@@ -603,8 +629,10 @@ async function loadDomains($: EngineInterface, withCapacity = false): Promise<vo
   for (const d of names?.result?.data ?? []) if (d.id && d.name) domainName.set(d.id.toLowerCase(), d.name.replace(/\.Domain$/i, ''))
   const caps = jsonOf<{ result?: { data?: { name?: string; id?: string }[] } }>(capacityList)
   capacityName.clear()
-  for (const c of (caps?.result?.data ?? []) as { id?: string; name?: string; state?: string; sku?: string }[]) {
+  for (const c of (caps?.result?.data ?? []) as { id?: string; name?: string; state?: string; sku?: string; region?: string; subscriptionId?: string; resourceGroup?: string }[]) {
     if (!c.id || !c.name) continue
+    const known = (v?: string) => (v && v !== 'Unknown' ? v : '')
+    capacityInfo.set(c.id.toLowerCase(), { name: c.name.replace(/\.Capacity$/i, ''), region: c.region ?? '', subscription: known(c.subscriptionId), group: known(c.resourceGroup) })
     capacityName.set(c.id.toLowerCase(), shortCapacity(c.name.replace(/\.Capacity$/i, ''), c.sku ?? ''))
     if (c.state) capacityState.set(c.id.toLowerCase(), c.state)
     if (c.sku) capacitySku.set(c.id.toLowerCase(), c.sku)
@@ -1024,7 +1052,11 @@ async function select($: EngineInterface, n: TreeNode): Promise<void> {
     return { expanded: [...open], cursor: n.id, selected: n.path ? n.id : cur.selected }
   })
   if (!isLeaf && (await expandFabric($, n, true))) await expandOpen($, n.id)
-  const detail: string[] = [`${n.kind} ${n.name}`, ...(n.path ? [`fab path: ${n.path}`] : n.note ? [n.note] : [])]
+  if (n.kind === 'capacity' && /^[0-9a-f-]{36}$/i.test(n.sig)) {
+    await patchView($, cur => (cur.cursor === n.id ? { detail: [`capacity ${n.name}`, ...capacityDetail(n.sig)] } : {}))
+    return
+  }
+  const detail: string[] = [`${n.kind} ${n.name}`, ...(n.path ? [`fab path: ${n.path}`] : n.note && !GROUP_KINDS.has(n.kind) ? [n.note] : [])]
   const key = apiPathOf(n)
   const cached = key ? await cachedProps($, key) : undefined
   await patchView($, cur => (cur.cursor === n.id ? { detail: [...detail, ...(cached ?? [])] } : {}))
@@ -1588,7 +1620,14 @@ export const register: Register = (on, options) => {
     })
     const shownNode = ex.cursor === TENANT ? tenantNode() : (ex.nodes.find(n => n.id === ex.cursor) ?? sel)
     const pathed = shownNode && shownNode.path ? shownNode : undefined
-    const actions = pathed
+    const azure = shownNode?.kind === 'capacity' ? azureLinks(shownNode.sig) : null
+    const headCount = shownNode && GROUP_KINDS.has(shownNode.kind) ? (shownNode.note.match(/\d+ workspaces?$/)?.[0] ?? '') : ''
+    const actions = azure
+      ? [
+          { key: 'cost', svg: 'ui:open', nerd: '\u{f0379}', plain: '↗', label: 'Azure cost', run: () => quiet(openUrl($, azure.cost)) },
+          { key: 'azure', svg: 'ui:open', nerd: '\u{f0379}', plain: '↗', label: 'Azure resource', run: () => quiet(openUrl($, azure.resource)) },
+        ]
+      : pathed
       ? [
           ...(webUrl(ex, pathed) ? [{ key: 'web', svg: 'ui:open', nerd: '\u{f0379}', plain: '↗', label: 'Open in Fabric', run: () => quiet(openWeb($, ex, pathed)) }] : []),
           ...(modelOf(pathed) ? [{ key: 'open', svg: 'ui:open', nerd: '\u{f0379}', plain: '↗', label: 'Open in te', run: () => quiet(openLocal($, ex, pathed)) }] : []),
@@ -1671,7 +1710,7 @@ export const register: Register = (on, options) => {
                         ),
                       ]
                     : []),
-                  ...(pathed
+                  ...(pathed || actions.length
                     ? [
                         propRow(
                           'pr:actions',
@@ -1683,10 +1722,12 @@ export const register: Register = (on, options) => {
                                 <Button key={a.key} plain label={a.label} onPress={a.run} />
                               </Box>
                             ))}
-                            <Box key="a:copy" flexDirection="row" alignItems="center" gap={1}>
-                              {icon16(FABRIC_SVG['ui:copy'], 'Copy', { t: '', c: MUTED }, 'ai:copy')}
-                              <Button key="copy" plain label="Copy path" onPress={p => quiet(copyOf($, pathed.path, p.surface))} />
-                            </Box>
+                            {pathed ? (
+                              <Box key="a:copy" flexDirection="row" alignItems="center" gap={1}>
+                                {icon16(FABRIC_SVG['ui:copy'], 'Copy', { t: '', c: MUTED }, 'ai:copy')}
+                                <Button key="copy" plain label="Copy path" onPress={p => quiet(copyOf($, pathed.path, p.surface))} />
+                              </Box>
+                            ) : null}
                           </Box>,
                         ),
                       ]
@@ -1801,6 +1842,7 @@ export const register: Register = (on, options) => {
               {icon16(FABRIC_SVG[shownNode.kind], typeLabel(shownNode.kind), { t: glyph(shownNode, tier).char, c: glyph(shownNode, tier).color }, 'sel')}
               <Text bold wrap="truncate-end">{shownNode.name}</Text>
               <Box flexGrow={1} />
+              {headCount ? <Text color={MUTED}>{headCount}</Text> : null}
               {sel && <Button key="clear" plain dimColor label={icon('\u{f0156}', '✕')} onPress={() => quiet(patchView($, () => ({ selected: '', detail: [] })))} />}
             </Box>
             {details.map((d, i) => (
@@ -1813,14 +1855,14 @@ export const register: Register = (on, options) => {
                 </Box>
               </Box>
             ))}
-            {(pathed || shownNode.kind === 'tenant setting') && rule('rule-actions')}
+            {(pathed || actions.length > 0 || shownNode.kind === 'tenant setting') && rule('rule-actions')}
             {shownNode.kind === 'tenant setting' && (
               <Box flexDirection="row" alignItems="center" gap={1}>
                 {native ? icon16(FABRIC_SVG['ui:open'], 'Open docs', { t: '', c: MUTED }, 'ai:docs') : null}
                 <Button key="docs" plain label={native ? 'Open docs' : `${icon('\u{f0379}', '↗')} Open docs`} onPress={() => quiet(openUrl($, settingDocs(shownNode.sig)))} />
               </Box>
             )}
-            {pathed && (
+            {(pathed || actions.length > 0) && (
             <Box flexDirection="row" alignItems="center" gap={2}>
               {actions.map(a => (
                 <Box key={`a:${a.key}`} flexDirection="row" alignItems="center" gap={1}>
@@ -1828,10 +1870,12 @@ export const register: Register = (on, options) => {
                   <Button key={a.key} plain label={native ? a.label : `${icon(a.nerd, a.plain)} ${a.label}`} onPress={a.run} />
                 </Box>
               ))}
-              <Box key="a:copy" flexDirection="row" alignItems="center" gap={1}>
-                {native ? icon16(FABRIC_SVG['ui:copy'], 'Copy', { t: '', c: MUTED }, 'ai:copy') : null}
-                <Button key="copy" plain label={native ? 'Copy path' : `${icon('\u{f018f}', '⧉')} Copy path`} onPress={p => quiet(copyOf($, pathed.path, p.surface))} />
-              </Box>
+              {pathed ? (
+                <Box key="a:copy" flexDirection="row" alignItems="center" gap={1}>
+                  {native ? icon16(FABRIC_SVG['ui:copy'], 'Copy', { t: '', c: MUTED }, 'ai:copy') : null}
+                  <Button key="copy" plain label={native ? 'Copy path' : `${icon('\u{f018f}', '⧉')} Copy path`} onPress={p => quiet(copyOf($, pathed.path, p.surface))} />
+                </Box>
+              ) : null}
             </Box>
             )}
           </Box>
