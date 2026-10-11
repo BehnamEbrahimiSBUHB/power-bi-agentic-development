@@ -974,8 +974,20 @@ async function revealPath($: EngineInterface, path: string): Promise<void> {
   }
 }
 
+let reportLinks = 'embed'
+
+function embedUrl(reportId: string): string {
+  return `https://app.powerbi.com/reportEmbed?reportId=${encodeURIComponent(reportId)}&autoAuth=true${tenantId ? `&ctid=${encodeURIComponent(tenantId)}` : ''}`
+}
+
+function linkFor(type: string, portal: string, reportId = ''): string {
+  if (type !== 'Report' || reportLinks !== 'embed') return portal
+  const id = reportId || (portal.match(/\/reports\/([0-9a-f-]{36})/i)?.[1] ?? '')
+  return id ? embedUrl(id) : portal
+}
+
 function webUrl(_ex: Explorer, n: TreeNode): string {
-  return n.url || ''
+  return linkFor(n.kind, n.url || '')
 }
 
 async function openLocal($: EngineInterface, ex: Explorer, n: TreeNode): Promise<void> {
@@ -1069,6 +1081,8 @@ async function revealHit($: EngineInterface, h: Hit): Promise<void> {
   if (target) await select($, target)
 }
 
+let hitTimer: { cancel: () => void } | null = null
+
 function pressHit($: EngineInterface, index: number): void {
   const h = findHits?.[index]
   if (!h) return
@@ -1076,8 +1090,13 @@ function pressHit($: EngineInterface, index: number): void {
   const key = `${FIND}${h.id}`
   const isDouble = lastPress.key === key && now - lastPress.at < DOUBLE_MS
   lastPress = { key: isDouble ? '' : key, at: now }
-  if (isDouble) quiet(openUrl($, itemUrl(h.workspace_id, h.type, h.id)))
-  else quiet(revealHit($, h))
+  hitTimer?.cancel()
+  hitTimer = null
+  if (isDouble) return void quiet(openUrl($, linkFor(h.type, itemUrl(h.workspace_id, h.type, h.id), h.id)))
+  hitTimer = $.clock.after(DOUBLE_MS, () => {
+    hitTimer = null
+    quiet(revealHit($, h))
+  })
 }
 
 function pressNow($: EngineInterface, n: TreeNode, r: Row): void {
@@ -1334,6 +1353,7 @@ export const register: Register = (on, options) => {
   glyphSetting = typeof options?.glyphs === 'string' ? options.glyphs : 'auto'
   follow = options?.follow !== 'off'
   fontHint = options?.fontHint !== 'off'
+  reportLinks = options?.reportLinks === 'portal' ? 'portal' : 'embed'
 
   on('session.start', async ($, e, next) => {
     useDrives((await $.env.get('OS')) === 'Windows_NT')
