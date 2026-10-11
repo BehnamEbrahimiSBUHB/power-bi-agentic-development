@@ -8,7 +8,7 @@ import { SETTING_DOCS } from './setting-data'
 import type { RowSpec, RowsProps, Seg } from './rows'
 import type { ZoneProps } from './zone'
 import { ancestors, EMPTY, empty, emptyMark, isLoaded, merge, type Row, visible } from './tree'
-import { inOneLake, modelOf, parseChildren, parseOneLake, parseWorkspaces, PLACEHOLDER, typeLabel } from './fabric'
+import { type ApiFolder, type ApiItem, folderTree, inOneLake, modelOf, parseChildren, parseOneLake, parseWorkspaces, PLACEHOLDER, typeLabel } from './fabric'
 import { FAB_TONE, type FabKind, fabCalls, fabGuids, fabKind, fabPositionals, fabWorkspaces, type Invocation, invocations, join, modelFromConnection, posix, queryOf, targetLabel, tokenize, useDrives } from './parse'
 import { fabTouched } from './touch'
 import { COPY, REFRESH, runFailure, setupOf, setupRows, spawnFailure } from './setup'
@@ -377,11 +377,6 @@ async function point($: EngineInterface, target: Target | null, opened: 'asked' 
   return moved
 }
 
-async function navigate($: EngineInterface, n: TreeNode): Promise<void> {
-  await patch($, cur => ({ root: n.id, cursor: n.id, scroll: null, expanded: [...new Set([...cur.expanded, n.id, ...ancestors(cur.nodes, n.id)])] }))
-  if (await expandFabric($, n)) await expandOpen($, n.id)
-}
-
 async function goUp($: EngineInterface): Promise<void> {
   await patch($, cur => {
     const n = cur.nodes.find(x => x.id === cur.root)
@@ -394,14 +389,7 @@ async function goHome($: EngineInterface): Promise<void> {
 }
 
 async function press($: EngineInterface, n: TreeNode): Promise<void> {
-  const now = await $.clock.now()
-  const isDouble = lastPress.key === n.id && now - lastPress.at < DOUBLE_MS
-  lastPress = { key: isDouble ? '' : n.id, at: now }
-  const ex = await get($)
-  if (n.id === TENANT || n.kind === 'tenant setting') await select($, n)
-  else if (isDouble && ex.nodes.some(c => c.parent === n.id)) await navigate($, n)
-  else if (isDouble) await openLocal($, ex, n)
-  else await select($, n)
+  await select($, n)
 }
 
 async function openWeb($: EngineInterface, ex: Explorer, n: TreeNode): Promise<void> {
@@ -451,25 +439,35 @@ async function fabLs($: EngineInterface, path?: string, urgent = false): Promise
   return run.stdout
 }
 
-const LS_HIDDEN = ['AppBackend']
+async function pages<T>($: EngineInterface, path: string, urgent: boolean): Promise<T[]> {
+  const out: T[] = []
+  let token = ''
+  for (let page = 0; page < 50; page++) {
+    const sep = path.includes('?') ? '&' : '?'
+    const body = jsonOf<{ value?: T[]; continuationToken?: string; errorCode?: string; message?: string }>(
+      await fabRaw($, ['api', token ? `${path}${sep}continuationToken=${encodeURIComponent(token)}` : path, '-q', 'text'], urgent),
+    )
+    if (!body || !Array.isArray(body.value)) throw new Error(body?.message ?? `fab api ${path} returned an unexpected shape`)
+    out.push(...body.value)
+    token = body.continuationToken ?? ''
+    if (!token) break
+  }
+  return out
+}
 
-async function lsNode($: EngineInterface, n: TreeNode, urgent = false): Promise<string> {
-  const workspace = n.kind === 'workspace' && /^[0-9a-f-]{36}$/i.test(n.sig) ? n.sig : ''
-  const [stdout, extra] = await Promise.all([
-    fabLs($, n.path, urgent),
-    workspace
-      ? Promise.all(LS_HIDDEN.map(type => fabRaw($, ['api', `workspaces/${workspace}/items?type=${type}`, '-q', 'text'], urgent).catch(() => '')))
-      : Promise.resolve([] as string[]),
-  ])
-  const apps = extra.flatMap(raw => jsonOf<{ value?: { id?: string; displayName?: string; type?: string }[] }>(raw)?.value ?? [])
-  if (!apps.length) return stdout
-  const body = jsonOf<{ result?: { data?: { name?: string; id?: string }[] } }>(stdout)
-  const data = body?.result?.data
-  if (!body || !data) return stdout
-  const seen = new Set(data.map(d => (d.id ?? '').toLowerCase()))
-  for (const a of apps) if (a.id && a.displayName && a.type && !seen.has(a.id.toLowerCase())) data.push({ name: `${a.displayName}.${a.type}`, id: a.id })
-  data.sort((x, y) => (x.name ?? '').localeCompare(y.name ?? '', undefined, { sensitivity: 'base' }))
-  return JSON.stringify(body)
+function folderOf(n: TreeNode): { ws: string; folder: string } | null {
+  if (n.kind === 'workspace' && /^[0-9a-f-]{36}$/i.test(n.sig)) return { ws: n.sig, folder: '' }
+  const m = n.kind === 'fabric folder' ? n.sig.match(/^([0-9a-f-]{36})\/([0-9a-f-]{36})$/i) : null
+  return m ? { ws: m[1]!, folder: m[2]! } : null
+}
+
+async function childrenOf($: EngineInterface, n: TreeNode, nodes: TreeNode[], urgent = false): Promise<{ kids: TreeNode[]; become: string }> {
+  const at = folderOf(n)
+  if (at) {
+    const listed = await Promise.all([pages<ApiItem>($, `workspaces/${at.ws}/items`, urgent), pages<ApiFolder>($, `workspaces/${at.ws}/folders`, urgent)]).catch(() => null)
+    if (listed) return { kids: folderTree(listed[0], listed[1], n, nodes, at.folder, emptyMark), become: '' }
+  }
+  return listing(await fabLs($, n.path, urgent), n, nodes)
 }
 
 const loading = new Map<string, Promise<boolean>>()
@@ -858,7 +856,7 @@ function reloadNode($: EngineInterface, id: string): Promise<boolean> {
     if (!n || !isLoaded(ex.nodes, n.id)) return true
     const gen = treeGen
     try {
-      const { kids } = listing(await lsNode($, n), n, ex.nodes)
+      const { kids } = await childrenOf($, n, ex.nodes)
       const owned = statusOwner === n.id
       if (owned) statusOwner = ''
       await patch($, cur => (gen === treeGen && cur.nodes.some(x => x.id === n.id) ? { nodes: merge(cur.nodes, n.id, kids), ...(owned ? { status: '' } : {}) } : {}))
@@ -899,7 +897,7 @@ function expandFabric($: EngineInterface, n: TreeNode, urgent = false): Promise<
     }
     if (inOneLake(n) && capacityState.size === 0) await warmGroups($)
     try {
-      const { kids, become } = listing(await lsNode($, n, urgent), n, ex.nodes)
+      const { kids, become } = await childrenOf($, n, ex.nodes, urgent)
       const owned = statusOwner === n.id
       if (owned) statusOwner = ''
       const fill = kids.length ? kids : become === 'lakehouse table' ? [] : [emptyMark(n.id)]
@@ -972,6 +970,13 @@ function withOptimistic(ex: Explorer): Explorer {
 }
 
 function pressNow($: EngineInterface, n: TreeNode, r: Row): void {
+  const now = Date.now()
+  const isDouble = lastPress.key === n.id && now - lastPress.at < DOUBLE_MS
+  lastPress = { key: isDouble ? '' : n.id, at: now }
+  if (isDouble && n.id !== TENANT && n.kind !== 'tenant setting') {
+    quiet(get($).then(ex => openWeb($, ex, n)))
+    return
+  }
   if (!r.leaf) optimistic.set(n.id, !r.open)
   pressedCursor = n.id
   $.ui.invalidate('ui.render')
@@ -1332,7 +1337,11 @@ export const register: Register = (on, options) => {
       if (ex.scroll === null) await patchView($, () => ({ scroll: view.from }))
       if (data.ctrl) await openWeb($, ex, n)
       else if (data.shift) await openLocal($, ex, n)
-      else await press($, n)
+      else {
+        const row = treeRows(withOptimistic(ex)).find(r => r.node.id === n.id)
+        if (row) pressNow($, n, row)
+        else await press($, n)
+      }
       return {}
     }
     if (typeof data.key !== 'string') return {}
