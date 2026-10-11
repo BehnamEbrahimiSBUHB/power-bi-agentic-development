@@ -523,8 +523,15 @@ function skuLabel(sku: string): string {
   const up = sku.trim().toUpperCase()
   if (!up) return ''
   if (up === 'PP3') return 'PPU'
-  if (/^FT/.test(up)) return 'Trial'
-  return up
+  const trial = up.match(/^FTL?(\d+)$/)
+  return trial ? `F${trial[1]}` : up
+}
+
+function shortCapacity(name: string, sku: string): string {
+  const up = sku.trim().toUpperCase()
+  if (/^FT/.test(up) || /^Trial-\d{8}T\d{6}Z-/.test(name)) return 'Fabric Trial'
+  if (up === 'PP3' || /^Premium Per User\b/i.test(name)) return 'PPU'
+  return name
 }
 type Setting = { settingName: string; title?: string; enabled?: boolean; tenantSettingGroup?: string; canSpecifySecurityGroups?: boolean; delegateToWorkspace?: boolean; delegateToCapacity?: boolean; delegateToDomain?: boolean; enabledSecurityGroups?: { name?: string }[]; excludedSecurityGroups?: { name?: string }[] }
 const settingOf = new Map<string, Setting>()
@@ -577,7 +584,7 @@ async function loadDomains($: EngineInterface, withCapacity = false): Promise<vo
   capacityName.clear()
   for (const c of (caps?.result?.data ?? []) as { id?: string; name?: string; state?: string; sku?: string }[]) {
     if (!c.id || !c.name) continue
-    capacityName.set(c.id.toLowerCase(), c.name.replace(/\.Capacity$/i, ''))
+    capacityName.set(c.id.toLowerCase(), shortCapacity(c.name.replace(/\.Capacity$/i, ''), c.sku ?? ''))
     if (c.state) capacityState.set(c.id.toLowerCase(), c.state)
     if (c.sku) capacitySku.set(c.id.toLowerCase(), c.sku)
   }
@@ -664,6 +671,10 @@ function grouped(nodes: TreeNode[], on: boolean, byCapacity = false): TreeNode[]
     }))
     .sort((a, b) => last(a.name, b.name, [a.sig === 'none', b.sig === 'none']))
   return withSettings([...sorted, ...placed])
+}
+
+function padCount(note: string): string {
+  return note.replace(/(^|- )(\d{1,3}) (workspaces?)$/, (_m, lead: string, count: string, word: string) => `${lead}${count.padStart(3)} ${word}`)
 }
 
 function splitNote(n: TreeNode, note: string): [string, string] {
@@ -1414,7 +1425,7 @@ export const register: Register = (on, options) => {
       const n = { ...r.node, note: noteOf(r) }
       const g = glyph(n, tier)
       const arrow = r.leaf ? '  ' : tier === 'plain' ? (r.open ? '▾ ' : '▸ ') : r.open ? '\u{f47c} ' : '\u{f460} '
-      const note = n.note ? ` ${n.note}` : ''
+      const note = n.note ? ` ${padCount(n.note)}` : ''
       const cols = Math.max(4, width - r.depth * 2 - 6 - note.length)
       const busy = busyTone(n.id)
       const isBright = brightSet.has(n.id) || (work !== null && busy !== '')
@@ -1431,8 +1442,8 @@ export const register: Register = (on, options) => {
       if (busy) left.push(spin(busy))
       const run = runState(n)
       const state: Seg[] = run ? [{ t: (tier === 'plain' ? (run === 'paused' ? '‖' : '▸') : run === 'paused' ? '\u{f03e4}' : '\u{f040a}') + ' ', c: run === 'paused' ? '#d9a54a' : '#5cc28a' }] : []
-      const [sku, tail] = splitNote(n, note.trim())
-      const right: Seg[] = sku ? [{ t: ` ${sku} `, c: '#6e6e7a' }, ...state.map(s => ({ ...s, t: s.t.trimEnd() })), { t: tail, c: '#6e6e7a' }] : [...state, ...(note ? [{ t: note, c: '#6e6e7a' }] : [])]
+      const [sku, tail] = splitNote(n, padCount(note.trim()))
+      const right: Seg[] = sku ? [{ t: ` ${sku} `, c: '#6e6e7a' }, ...state.map(s => ({ ...s, t: s.t.trimEnd() })), { t: tail, c: '#6e6e7a' }] : [...state, ...(note ? [{ t: ` ${padCount(note.trim())}`, c: '#6e6e7a' }] : [])]
       return { id: n.kind === 'placeholder' || n.kind === EMPTY ? '' : n.id, left: clean(left), right }
     }
     const note = (text: string): RowSpec => ({ id: '', left: [{ t: text, c: '#6e6e7a' }], right: [] })
