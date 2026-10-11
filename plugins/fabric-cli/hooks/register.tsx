@@ -451,6 +451,27 @@ async function fabLs($: EngineInterface, path?: string, urgent = false): Promise
   return run.stdout
 }
 
+const LS_HIDDEN = ['AppBackend']
+
+async function lsNode($: EngineInterface, n: TreeNode, urgent = false): Promise<string> {
+  const workspace = n.kind === 'workspace' && /^[0-9a-f-]{36}$/i.test(n.sig) ? n.sig : ''
+  const [stdout, extra] = await Promise.all([
+    fabLs($, n.path, urgent),
+    workspace
+      ? Promise.all(LS_HIDDEN.map(type => fabRaw($, ['api', `workspaces/${workspace}/items?type=${type}`, '-q', 'text'], urgent).catch(() => '')))
+      : Promise.resolve([] as string[]),
+  ])
+  const apps = extra.flatMap(raw => jsonOf<{ value?: { id?: string; displayName?: string; type?: string }[] }>(raw)?.value ?? [])
+  if (!apps.length) return stdout
+  const body = jsonOf<{ result?: { data?: { name?: string; id?: string }[] } }>(stdout)
+  const data = body?.result?.data
+  if (!body || !data) return stdout
+  const seen = new Set(data.map(d => (d.id ?? '').toLowerCase()))
+  for (const a of apps) if (a.id && a.displayName && a.type && !seen.has(a.id.toLowerCase())) data.push({ name: `${a.displayName}.${a.type}`, id: a.id })
+  data.sort((x, y) => (x.name ?? '').localeCompare(y.name ?? '', undefined, { sensitivity: 'base' }))
+  return JSON.stringify(body)
+}
+
 const loading = new Map<string, Promise<boolean>>()
 let statusOwner = ''
 
@@ -537,6 +558,7 @@ type Setting = { settingName: string; title?: string; enabled?: boolean; tenantS
 const settingOf = new Map<string, Setting>()
 const TENANT = '#tenant'
 const TOGGLE = 'toggle:'
+const TOGGLE_COLOR: Record<string, string> = { domains: '#c4b5fd', capacities: '#5eead4' }
 
 let nativeScroll = false
 const optimistic = new Map<string, boolean>()
@@ -836,7 +858,7 @@ function reloadNode($: EngineInterface, id: string): Promise<boolean> {
     if (!n || !isLoaded(ex.nodes, n.id)) return true
     const gen = treeGen
     try {
-      const { kids } = listing(await fabLs($, n.path), n, ex.nodes)
+      const { kids } = listing(await lsNode($, n), n, ex.nodes)
       const owned = statusOwner === n.id
       if (owned) statusOwner = ''
       await patch($, cur => (gen === treeGen && cur.nodes.some(x => x.id === n.id) ? { nodes: merge(cur.nodes, n.id, kids), ...(owned ? { status: '' } : {}) } : {}))
@@ -877,7 +899,7 @@ function expandFabric($: EngineInterface, n: TreeNode, urgent = false): Promise<
     }
     if (inOneLake(n) && capacityState.size === 0) await warmGroups($)
     try {
-      const { kids, become } = listing(await fabLs($, n.path, urgent), n, ex.nodes)
+      const { kids, become } = listing(await lsNode($, n, urgent), n, ex.nodes)
       const owned = statusOwner === n.id
       if (owned) statusOwner = ''
       const fill = kids.length ? kids : become === 'lakehouse table' ? [] : [emptyMark(n.id)]
@@ -1520,7 +1542,7 @@ export const register: Register = (on, options) => {
       )
     }
     const dimmed = (source: string | undefined) => source?.replace(/#[0-9a-fA-F]{6}/g, '#5c5c66')
-    const toggle = (key: string, isOn: boolean, svg: string, what: string, nerd: string, plain: string, run: () => void) =>
+    const toggle = (key: string, isOn: boolean, svg: string, what: string, nerd: string, plain: string) =>
       native ? (
         <Box key={`tg:${key}`} position="relative" flexDirection="row" alignItems="center" paddingX={1} backgroundColor={isOn ? '#2f3540' : undefined} hover={{ backgroundColor: isOn ? '#38404d' : '#26282d' }}>
           {icon16(isOn ? FABRIC_SVG[svg] : dimmed(FABRIC_SVG[svg]), `${isOn ? 'Hide' : 'Show'} ${what}`, { t: plain, c: MUTED }, `ti:${key}`)}
@@ -1532,7 +1554,12 @@ export const register: Register = (on, options) => {
           </Box>
         </Box>
       ) : (
-        <Button key={key} plain dimColor={!isOn} label={`${icon(nerd, plain)} `} onPress={run} />
+        <Box key={`tg:${key}`} position="relative" flexDirection="row">
+          <Text color={isOn ? TOGGLE_COLOR[key] : MUTED}>{`${icon(nerd, plain)} `}</Text>
+          <Box position="absolute" top={0} left={0} right={0} bottom={0}>
+            <Client key={`z:${TOGGLE}${key}`} module="./zone.tsx" props={{ id: `${TOGGLE}${key}` } satisfies ZoneProps} width="100%" height="100%" />
+          </Box>
+        </Box>
       )
     const details = ex.detail.slice(1, DETAIL_ROWS).map(l => {
       const at = l.indexOf(': ')
@@ -1549,8 +1576,8 @@ export const register: Register = (on, options) => {
       : []
     const toggles = (
       <Box flexDirection="row" alignItems="center" gap={native ? 1 : 2}>
-        {ex.target && toggle('domains', ex.byDomain !== false, 'domain', 'domains', '\u{f0ac}', '◇', () => quiet(toggleDomains($)))}
-        {ex.target && toggle('capacities', ex.byCapacity === true, 'capacity', 'capacities', '\u{f04c5}', '◔', () => quiet(toggleCapacity($)))}
+        {ex.target && toggle('domains', ex.byDomain !== false, 'domain', 'domains', '\u{f0ac}', '◇')}
+        {ex.target && toggle('capacities', ex.byCapacity === true, 'capacity', 'capacities', '\u{f04c5}', '◔')}
         {rootNode && <Button key="up" plain dimColor label={icon('\u{f005d}', '↑')} onPress={() => quiet(goUp($))} />}
         {rootNode && <Button key="home" plain dimColor label={icon('\u{f02dc}', '⌂')} onPress={() => quiet(goHome($))} />}
         <Button
