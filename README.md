@@ -281,7 +281,7 @@ Reviewer agents for these visual types (`deneb-reviewer`, `svg-reviewer`, `r-rev
 | Type | Name | Description |
 |------|------|-------------|
 | Skill | [`semantic-model`](plugins/semantic-models/skills/semantic-model/) | Design, build, refresh, and review semantic models through a `te`-first tool cascade |
-| Skill | [`standardize-naming-conventions`](plugins/semantic-models/skills/standardize-naming-conventions/) | Audit and standardize naming conventions in semantic models |
+| Skill | [`organize-semantic-model`](plugins/semantic-models/skills/organize-semantic-model/) | Organize a model end to end: names, folders, hierarchies, descriptions, formats, UDFs, perspectives, translations, roles |
 | Skill | [`refresh-semantic-model`](plugins/semantic-models/skills/refresh-semantic-model/) | Trigger or troubleshoot refreshes |
 | Skill | [`lineage-analysis`](plugins/semantic-models/skills/lineage-analysis/) | Trace downstream reports from a semantic model across workspaces |
 | Skill | [`power-query`](plugins/semantic-models/skills/power-query/) | Write M expressions, debug query folding, execute M locally or via Fabric API |
