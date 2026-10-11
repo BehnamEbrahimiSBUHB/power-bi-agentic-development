@@ -533,6 +533,13 @@ type Setting = { settingName: string; title?: string; enabled?: boolean; tenantS
 const settingOf = new Map<string, Setting>()
 const TENANT = '#tenant'
 const TOGGLE = 'toggle:'
+const DETAILS_REGION = 'region:details'
+const SLACK = 2
+const desk = { active: false, from: null as number | null, lastFrom: 0, treeMax: 0, detailFrom: 0, detailMax: 0, page: 10, region: 'tree' as 'tree' | 'details', pinAsked: false }
+
+function clamp(n: number, lo: number, hi: number): number {
+  return Math.max(lo, Math.min(hi, n))
+}
 const optimistic = new Map<string, boolean>()
 let pressedCursor = ''
 const TENANT_CLOSED = '#tenant-closed'
@@ -1222,8 +1229,13 @@ export const register: Register = (on, options) => {
 
   on('ui.message', async ($, e, next) => {
     if (e.requestId === PANE && e.element.startsWith('z:') && e.data && typeof e.data === 'object') {
-      const data = e.data as { zone?: unknown; ctrl?: unknown; shift?: unknown }
+      const data = e.data as { zone?: unknown; hover?: unknown; ctrl?: unknown; shift?: unknown }
+      if (typeof data.hover === 'string') {
+        desk.region = data.hover === DETAILS_REGION ? 'details' : 'tree'
+        return {}
+      }
       const id = typeof data.zone === 'string' ? data.zone : ''
+      if (id === DETAILS_REGION) return {}
       if (id === `${TOGGLE}domains`) quiet(toggleDomains($))
       else if (id === `${TOGGLE}capacities`) quiet(toggleCapacity($))
       else if (id) {
@@ -1288,7 +1300,15 @@ export const register: Register = (on, options) => {
     return {}
   })
 
-  on('ui.scroll', { component: 'Pane', requestId: PANE }, async ($, e) => {
+  on('ui.scroll', { component: 'Pane', requestId: PANE }, async ($, e, next) => {
+    if (desk.active && !e.pointer) {
+      if (e.origin && e.origin.kind !== 'person') return next(e)
+      const step = Math.abs(e.by) >= e.bodyRows ? Math.sign(e.by) * desk.page : e.by
+      if (desk.region === 'details') desk.detailFrom = clamp(desk.detailFrom + step, 0, desk.detailMax)
+      else desk.from = clamp((desk.from ?? desk.lastFrom) + step, 0, desk.treeMax)
+      $.ui.invalidate('ui.render')
+      return (e.contentRows ?? 0) - (e.bodyRows ?? 0) >= SLACK ? next({ ...e, offset: SLACK }) : {}
+    }
     const view = views.get('terminal') ?? views.get('desktop') ?? { from: 0, max: 0 }
     const ex = await get($)
     const to = Math.max(0, Math.min(view.max, (ex.scroll ?? view.from) + Math.sign(e.by) * Math.max(3, Math.abs(e.by))))
@@ -1432,7 +1452,7 @@ export const register: Register = (on, options) => {
       const busy = busyTone(n.id)
       const spinning = n.kind === PLACEHOLDER && n.name === 'loading…'
       return (
-        <Box key={`n:${n.id}`} position="relative" flexDirection="row" alignItems="center" backgroundColor={n.id === ex.cursor ? '#2a2d34' : undefined} hover={{ backgroundColor: '#232529' }}>
+        <Box key={`n:${n.id}`} position="relative" height={1} overflow="hidden" flexDirection="row" alignItems="center" backgroundColor={n.id === ex.cursor ? '#2a2d34' : undefined} hover={{ backgroundColor: '#232529' }}>
           {r.depth > 0 && Svg ? (
             <Svg key={`g:${n.id}`} source={guides(r.depth)} alt={`level ${r.depth}`} width={r.depth * 16} height={ROW_PX} />
           ) : (
@@ -1513,6 +1533,155 @@ export const register: Register = (on, options) => {
         <Text> </Text>
       </Box>
     )
+    if (native) {
+      desk.active = true
+      const body = Math.max(10, e.props.scroll?.bodyRows ?? 30)
+      const line = (key: string, child: unknown) => (
+        <Box key={key} height={1} overflow="hidden" flexDirection="row" alignItems="center">
+          {child as never}
+        </Box>
+      )
+      const detailLines = shownNode && ex.detail.length > 0
+        ? [
+            line(
+              'd:head',
+              <Box flexDirection="row" alignItems="center" gap={1} flexGrow={1}>
+                {icon16(FABRIC_SVG[shownNode.kind], typeLabel(shownNode.kind), { t: glyph(shownNode, tier).char, c: glyph(shownNode, tier).color }, 'sel')}
+                <Text bold wrap="truncate-end">{shownNode.name}</Text>
+                <Box flexGrow={1} />
+                {sel && <Button key="clear" plain dimColor label="✕" onPress={() => quiet(patchView($, () => ({ selected: '', detail: [] })))} />}
+              </Box>,
+            ),
+            line('d:gap', <Text> </Text>),
+            ...details.map((d, i) =>
+              line(
+                `d:p:${i}`,
+                <Box position="relative" flexDirection="row" gap={1} flexGrow={1}>
+                  <Box width={12} flexShrink={0}>
+                    <Text color={MUTED}>{d.key}</Text>
+                  </Box>
+                  <Box flexShrink={1}>
+                    <Text wrap="truncate-end">{d.value}</Text>
+                  </Box>
+                  <Box position="absolute" top={0} left={0} right={0} bottom={0}>
+                    <Client key={`z:${DETAILS_REGION}:${i}`} module="./zone.tsx" props={{ id: DETAILS_REGION } satisfies ZoneProps} width="100%" height="100%" />
+                  </Box>
+                </Box>,
+              ),
+            ),
+            ...(pathed || shownNode.kind === 'tenant setting' ? [line('d:rule', rule('rule-actions'))] : []),
+            ...(shownNode.kind === 'tenant setting'
+              ? [
+                  line(
+                    'd:docs',
+                    <Box flexDirection="row" alignItems="center" gap={1}>
+                      {icon16(FABRIC_SVG['ui:open'], 'Open docs', { t: '', c: MUTED }, 'ai:docs')}
+                      <Button key="docs" plain label="Open docs" onPress={() => quiet(openUrl($, settingDocs(shownNode.sig)))} />
+                    </Box>,
+                  ),
+                ]
+              : []),
+            ...(pathed
+              ? [
+                  line(
+                    'd:actions',
+                    <Box flexDirection="row" alignItems="center" gap={2}>
+                      {actions.map(a => (
+                        <Box key={`a:${a.key}`} flexDirection="row" alignItems="center" gap={1}>
+                          {icon16(FABRIC_SVG[a.svg], a.label, { t: '', c: MUTED }, `ai:${a.key}`)}
+                          <Button key={a.key} plain label={a.label} onPress={a.run} />
+                        </Box>
+                      ))}
+                      <Box key="a:copy" flexDirection="row" alignItems="center" gap={1}>
+                        {icon16(FABRIC_SVG['ui:copy'], 'Copy', { t: '', c: MUTED }, 'ai:copy')}
+                        <Button key="copy" plain label="Copy path" onPress={p => quiet(copyOf($, pathed.path, p.surface))} />
+                      </Box>
+                    </Box>,
+                  ),
+                ]
+              : []),
+          ]
+        : []
+      const headRows = 4 + (pending ? 1 : 0) + (!ex.setup && ex.nodes.length === 0 ? 1 : 0)
+      const detailRoom = detailLines.length ? Math.min(detailLines.length, Math.max(4, Math.floor(body * 0.4))) : 0
+      const treeRoom = Math.max(3, body - headRows - (detailRoom ? detailRoom + 1 : 0))
+      desk.treeMax = Math.max(0, rows.length - treeRoom)
+      desk.detailMax = Math.max(0, detailLines.length - detailRoom)
+      desk.page = Math.max(1, treeRoom - 1)
+      desk.detailFrom = clamp(desk.detailFrom, 0, desk.detailMax)
+      const treeFrom = clamp(desk.from ?? from, 0, desk.treeMax)
+      desk.lastFrom = treeFrom
+      const offset = e.props.scroll?.offset ?? 0
+      if (offset === SLACK) desk.pinAsked = false
+      else if (!desk.pinAsked) {
+        desk.pinAsked = true
+        quiet($.ui.scroll({ to: { key: 'desk-body' }, in: PANE, block: 'start' }))
+      }
+      const bar = (key: string, total: number, start: number, size: number) =>
+        total <= size ? null : (
+          <Box key={key} width={1} height={size} position="relative" backgroundColor="#1d1d21" flexShrink={0}>
+            <Box position="absolute" left={0} width={1} top={Math.round((start / total) * size)} height={Math.max(1, Math.round((size * size) / total))} backgroundColor="#4a4a55" />
+          </Box>
+        )
+      return (
+        <Box flexDirection="column" height={body + SLACK * 2} overflow="hidden">
+          <Box height={SLACK} />
+          <Box key="desk-body" height={1} flexDirection="row" alignItems="center">
+            <Box flexGrow={1} flexShrink={1} flexDirection="row" alignItems="center" gap={1}>
+              {icon16(FABRIC_SVG.fabric, 'Microsoft Fabric', { t: titleGlyph(tier), c: TITLE_COLOR }, 'logo')}
+              <Text bold wrap="truncate-end">{headName}</Text>
+              {ex.status ? <Text color={MUTED} wrap="truncate-end">{ex.status}</Text> : null}
+            </Box>
+            {toggles}
+          </Box>
+          <Box height={3} flexDirection="row" alignItems="center" gap={1} overflow="hidden">
+            <Box flexGrow={1} flexShrink={1} width="100%">
+              <Input
+                key="q"
+                placeholder="Filter, or Enter to jump"
+                value={ex.query}
+                onInput={(v: string) => {
+                  desk.from = null
+                  quiet(patchView($, () => ({ query: v })))
+                }}
+                onSubmit={(v: string) => quiet(patch($, cur => jumpTo(cur, v)))}
+              />
+            </Box>
+            {ex.query ? <Button key="clearq" plain dimColor label="×" onPress={() => quiet(patchView($, () => ({ query: '' })))} /> : null}
+          </Box>
+          {pending ? (
+            <Box height={1}>
+              <Client key="pending" module="./rows.tsx" props={{ rows: [{ id: '', left: [{ t: pending + ' ', c: MUTED }, { t: '', spin: true, c: TITLE_COLOR }], right: [] }], active: '', activeBg: '', hoverBg: '', tones: TONES, spinner } satisfies RowsProps} />
+            </Box>
+          ) : null}
+          {!ex.setup && ex.nodes.length === 0 ? (
+            <Box height={1}>
+              <Text color={MUTED}>{ex.target ? 'nothing loaded yet' : HINT}</Text>
+            </Box>
+          ) : null}
+          <Box key="tree" height={treeRoom} flexDirection="row" overflow="hidden">
+            {ex.setup ? (
+              <Client key="setup" module="./rows.tsx" props={{ rows: setupRows(ex.setup, tier, width), active: '', activeBg: '', hoverBg: '#2d2f33', tones: TONES, spinner } satisfies RowsProps} />
+            ) : (
+              <Box flexDirection="column" flexGrow={1} flexShrink={1}>
+                {rows.slice(treeFrom, treeFrom + treeRoom).map(nativeRow)}
+              </Box>
+            )}
+            {bar('tree-bar', rows.length, treeFrom, treeRoom)}
+          </Box>
+          {detailRoom ? rule('rule-top') : null}
+          {detailRoom ? (
+            <Box key="details" height={detailRoom} flexDirection="row" overflow="hidden">
+              <Box flexDirection="column" flexGrow={1} flexShrink={1}>
+                {detailLines.slice(desk.detailFrom, desk.detailFrom + detailRoom)}
+              </Box>
+              {bar('detail-bar', detailLines.length, desk.detailFrom, detailRoom)}
+            </Box>
+          ) : null}
+          <Box height={SLACK} />
+        </Box>
+      )
+    }
     return (
       <Box flexDirection="column" minHeight={Math.max(1, e.props.scroll?.bodyRows ?? 1)}>
         <Box flexDirection="row" alignItems="center">
