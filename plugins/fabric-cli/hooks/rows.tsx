@@ -8,14 +8,14 @@ export type RowsProps = {
   activeBg: string
   hoverBg: string
   tones: Record<string, { bright: string[]; dim: string[] }>
-  spinner?: string[]
   pointer?: boolean
   bar?: { pos: number; size: number; thumb: string; track: string }
 }
 type Local = { hover: number; phase: number; drag: boolean; ref: { stop?: () => void; unpoint?: () => void } }
 
 const TICK_MS = 90
-const FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+const FRAMES = ['O  ', 'oO ', '.oO', ' .O', '  O', ' Oo', 'Oo.', 'O. ']
+const GRADIENT = ['#5eead4', '#67e8f9', '#7dd3fc', '#93c5fd', '#a5b4fc', '#c4b5fd', '#d8b4fe', '#f0abfc', '#d8b4fe', '#c4b5fd', '#a5b4fc', '#93c5fd', '#7dd3fc', '#67e8f9']
 
 function shimmer(i: number, phase: number, len: number, palette: string[]): string {
   const band = ((phase * 1.6) % (len + 8)) - 4
@@ -81,12 +81,17 @@ const Rows: ClientModule<RowsProps, Local> = (props, surface) => {
     if (row.id) surface.post({ press: row.id, ctrl: Boolean(e.ctrl), shift: Boolean(e.shift) })
   })
   surface.onKey(e => surface.post({ key: e.key, ctrl: Boolean(e.ctrl), shift: Boolean(e.shift) }))
-  const frames = props.spinner?.length ? props.spinner : FRAMES
   const draw = (s: Seg, k: number) => {
     if (s.spin) {
+      const frame = FRAMES[state.phase % FRAMES.length] ?? ''
       return (
-        <Text key={String(k)} color={s.c} bold={s.b}>
-          {s.t + (frames[state.phase % frames.length] ?? '')}
+        <Text key={String(k)} bold={s.b}>
+          {s.t ? <Text color={s.c}>{s.t}</Text> : null}
+          {[...frame].map((ch, i) => (
+            <Text key={String(i)} color={GRADIENT[(state.phase + i * 2) % GRADIENT.length]} bold={ch === 'O'}>
+              {ch}
+            </Text>
+          ))}
         </Text>
       )
     }

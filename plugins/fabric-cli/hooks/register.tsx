@@ -16,7 +16,7 @@ import { COPY, REFRESH, runFailure, setupOf, setupRows, spawnFailure } from './s
 const STATE = { plugin: 'fabric-cli', key: 'explorer' } as const
 const NODES = { plugin: 'fabric-cli', key: 'nodes' } as const
 const PANE = 'fabric-pane'
-const TITLE = 'Fabric'
+const TITLE = 'Fabric in Claude Code'
 const TITLE_GLYPH = { fabric: 0xf2292, nerd: 'F', plain: 'F' }
 const TITLE_COLOR = '#2dd4bf'
 const HINT = 'waiting for a fab command, or /fabric-pane'
@@ -35,7 +35,6 @@ const TONES: Record<string, { bright: string[]; dim: string[] }> = {
   pink: { bright: ['#ec4899', '#f472b6', '#f9a8d4', '#fce7f3'], dim: ['#831843', '#9d174d', '#b8406f', '#cf6f93'] },
   purple: { bright: ['#a855f7', '#c084fc', '#d8b4fe', '#f3e8ff'], dim: ['#581c87', '#6b21a8', '#8b47c4', '#a874d6'] },
 }
-const PLAIN_SPINNER = ['|', '/', '-', '\\']
 const FONT_SCRIPT =
   'if command -v fc-list >/dev/null 2>&1; then f=$(fc-list ":charset=$1" file | head -n1 | cut -d: -f1); ' +
   'else f=$(ls "$HOME"/Library/Fonts/*"$2"* /Library/Fonts/*"$2"* 2>/dev/null | head -n1); fi; ' +
@@ -665,7 +664,7 @@ function grouped(nodes: TreeNode[], on: boolean, byCapacity = false): TreeNode[]
   const useDomains = spaces.some(n => domainKey(n) && domainKey(n) !== 'none')
   if (!useDomains && !byCapacity) return withSettings(flat)
   const domainLabel = (k: string) => (k === 'none' ? 'No domain' : (domainName.get(k) ?? `Domain ${k.slice(0, 8)}`))
-  const capacityLabel = (k: string) => (k === 'none' ? 'No capacity' : (capacityName.get(k) ?? `Capacity ${k.slice(0, 8)}`))
+  const capacityLabel = (k: string) => (k === 'none' ? 'No capacity (Pro workspaces)' : (capacityName.get(k) ?? `Capacity ${k.slice(0, 8)}`))
   const last = (a: string, b: string, none: boolean[]) => (none[0] ? 1 : none[1] ? -1 : a.localeCompare(b))
   const groups = new Map<string, TreeNode>()
   const counts = new Map<string, number>()
@@ -705,8 +704,11 @@ function splitNote(n: TreeNode, note: string): [string, string] {
   return cut < 0 ? ['', note] : [note.slice(0, cut), note.slice(cut)]
 }
 
-function runState(n: TreeNode): 'paused' | 'running' | '' {
+function runState(n: TreeNode): 'paused' | 'running' | 'fixed' | '' {
   if (n.kind !== 'capacity' || !capacityState.has(n.sig.toLowerCase())) return ''
+  const sku = (capacitySku.get(n.sig.toLowerCase()) ?? '').toUpperCase()
+  if (sku === 'PP3') return ''
+  if (sku.startsWith('FT')) return 'fixed'
   return paused(n.sig) ? 'paused' : 'running'
 }
 
@@ -1317,6 +1319,12 @@ export const register: Register = (on, options) => {
       }
       return {}
     }
+    if (e.requestId === PANE && e.element.startsWith('tg:') && e.data && typeof e.data === 'object') {
+      const tab = (e.data as { tab?: unknown }).tab
+      if (tab === `${TOGGLE}domains`) quiet(toggleDomains($))
+      else if (tab === `${TOGGLE}capacities`) quiet(toggleCapacity($))
+      return {}
+    }
     if (e.requestId === PANE && e.element === 'setup' && e.data && typeof e.data === 'object') {
       const data = e.data as { press?: unknown; tab?: unknown; copy?: unknown }
       const pick = [data.tab, data.press, data.copy].find((v): v is string => typeof v === 'string') ?? ''
@@ -1464,8 +1472,8 @@ export const register: Register = (on, options) => {
       const g = glyph(n, tier)
       const arrow = r.leaf ? '  ' : tier === 'plain' ? (r.open ? '▾ ' : '▸ ') : r.open ? '\u{f47c} ' : '\u{f460} '
       const note = n.note ? ` ${padCount(n.note)}` : ''
-      const cols = Math.max(4, width - r.depth * 2 - 6 - note.length)
       const busy = busyTone(n.id)
+      const cols = Math.max(4, width - r.depth * 2 - 6 - note.length - (busy ? 4 : 0))
       const isBright = brightSet.has(n.id) || (work !== null && busy !== '')
       const isDim = !isBright && dimSet.has(n.id)
       const name = clip(n.name, cols)
@@ -1479,7 +1487,7 @@ export const register: Register = (on, options) => {
       ]
       if (busy) left.push(spin(busy))
       const run = runState(n)
-      const state: Seg[] = run ? [{ t: (tier === 'plain' ? (run === 'paused' ? '‖' : '▸') : run === 'paused' ? '\u{f03e4}' : '\u{f040a}') + ' ', c: run === 'paused' ? '#d9a54a' : '#5cc28a' }] : []
+      const state: Seg[] = run ? [{ t: (tier === 'plain' ? (run === 'paused' ? '‖' : '▸') : run === 'paused' ? '\u{f03e4}' : '\u{f040a}') + ' ', c: run === 'paused' ? '#d9a54a' : run === 'fixed' ? '#6e6e7a' : '#5cc28a' }] : []
       const [sku, tail] = splitNote(n, padCount(note.trim()))
       const right: Seg[] = sku ? [{ t: ` ${sku} `, c: '#6e6e7a' }, ...state.map(s => ({ ...s, t: s.t.trimEnd() })), { t: tail, c: '#6e6e7a' }] : [...state, ...(note ? [{ t: ` ${padCount(note.trim())}`, c: '#6e6e7a' }] : [])]
       return { id: n.kind === 'placeholder' || n.kind === EMPTY ? '' : n.id, left: clean(left), right }
@@ -1504,7 +1512,6 @@ export const register: Register = (on, options) => {
       ]),
       right: [],
     }
-    const spinner = tier === 'plain' ? PLAIN_SPINNER : []
     const table = $.ui.resolve(e)
     const Svg = 'Svg' in table ? table.Svg : undefined
     const native = e.surface === 'desktop' && Boolean(Svg)
@@ -1539,7 +1546,7 @@ export const register: Register = (on, options) => {
           <Box flexDirection="row" alignItems="center" gap={1} flexShrink={1}>
             {spinning ? null : icon16(FABRIC_SVG[n.kind] ?? (n.kind === 'tenant setting' ? FABRIC_SVG[n.note.startsWith('On') ? 'ui:on' : 'ui:off'] : undefined), typeLabel(n.kind), { t: g.char, c: g.color }, `i:${n.id}`)}
             {spinning ? (
-              <Client key={`ph:${n.id}`} module="./rows.tsx" props={{ rows: [{ id: '', left: [{ t: '', spin: true, c: MUTED }, { t: ' Loading…', c: MUTED }], right: [] }], active: '', activeBg: '', hoverBg: '', tones: TONES, spinner } satisfies RowsProps} />
+              <Client key={`ph:${n.id}`} module="./rows.tsx" props={{ rows: [{ id: '', left: [{ t: '', spin: true, c: MUTED }, { t: ' Loading…', c: MUTED }], right: [] }], active: '', activeBg: '', hoverBg: '', tones: TONES } satisfies RowsProps} />
             ) : (
               <Text color={faded ? MUTED : undefined} wrap="truncate-end">{faded ? n.name : label}</Text>
             )}
@@ -1547,7 +1554,7 @@ export const register: Register = (on, options) => {
           </Box>
           <Box flexGrow={1} />
           {splitNote(n, note)[0] ? <Text color={MUTED}>{splitNote(n, note)[0]}</Text> : null}
-          {runState(n) ? <Box marginLeft={splitNote(n, note)[0] ? 1 : 0} marginRight={splitNote(n, note)[0] ? 0 : 1}>{icon16(FABRIC_SVG[runState(n) === 'paused' ? 'ui:pause' : 'ui:play'], runState(n), { t: '', c: MUTED }, `st:${n.id}`)}</Box> : null}
+          {runState(n) ? <Box marginLeft={splitNote(n, note)[0] ? 1 : 0} marginRight={splitNote(n, note)[0] ? 0 : 1}>{icon16(runState(n) === 'paused' ? FABRIC_SVG['ui:pause'] : runState(n) === 'fixed' ? dimmed(FABRIC_SVG['ui:play']) : FABRIC_SVG['ui:play'], runState(n) === 'fixed' ? 'trial, always running' : runState(n), { t: '', c: MUTED }, `st:${n.id}`)}</Box> : null}
           {splitNote(n, note)[1] ? <Text color={MUTED}>{splitNote(n, note)[1]}</Text> : null}
           {faded ? null : (
             <Box position="absolute" top={0} left={0} right={0} bottom={0}>
@@ -1570,11 +1577,8 @@ export const register: Register = (on, options) => {
           </Box>
         </Box>
       ) : (
-        <Box key={`tg:${key}`} position="relative" flexDirection="row">
-          <Text color={isOn ? TOGGLE_COLOR[key] : MUTED}>{`${icon(nerd, plain)} `}</Text>
-          <Box position="absolute" top={0} left={0} right={0} bottom={0}>
-            <Client key={`z:${TOGGLE}${key}`} module="./zone.tsx" props={{ id: `${TOGGLE}${key}` } satisfies ZoneProps} width="100%" height="100%" />
-          </Box>
+        <Box key={`tg:${key}`} width={2} flexShrink={0}>
+          <Client key={`tg:${key}`} module="./rows.tsx" props={{ rows: [{ id: '', left: [{ t: icon(nerd, plain), c: isOn ? TOGGLE_COLOR[key] : MUTED, tab: `${TOGGLE}${key}` }], right: [] }], active: '', activeBg: '', hoverBg: '', tones: TONES } satisfies RowsProps} />
         </Box>
       )
     const details = ex.detail.slice(1, DETAIL_ROWS).map(l => {
@@ -1720,7 +1724,7 @@ export const register: Register = (on, options) => {
           </Box>
           {pending ? (
             <Box height={1}>
-              <Client key="pending" module="./rows.tsx" props={{ rows: [{ id: '', left: [{ t: pending + ' ', c: MUTED }, { t: '', spin: true, c: TITLE_COLOR }], right: [] }], active: '', activeBg: '', hoverBg: '', tones: TONES, spinner } satisfies RowsProps} />
+              <Client key="pending" module="./rows.tsx" props={{ rows: [{ id: '', left: [{ t: pending + ' ', c: MUTED }, { t: '', spin: true, c: TITLE_COLOR }], right: [] }], active: '', activeBg: '', hoverBg: '', tones: TONES } satisfies RowsProps} />
             </Box>
           ) : null}
           {!ex.setup && ex.nodes.length === 0 ? (
@@ -1729,7 +1733,7 @@ export const register: Register = (on, options) => {
             </Box>
           ) : null}
           {ex.setup ? (
-            <Client key="setup" module="./rows.tsx" props={{ rows: setupRows(ex.setup, tier, width), active: '', activeBg: '', hoverBg: '#2d2f33', tones: TONES, spinner } satisfies RowsProps} />
+            <Client key="setup" module="./rows.tsx" props={{ rows: setupRows(ex.setup, tier, width), active: '', activeBg: '', hoverBg: '#2d2f33', tones: TONES } satisfies RowsProps} />
           ) : (
             <Box key="tree" flexDirection="column">
               {first > 0 ? <Box key="above" height={first} /> : null}
@@ -1751,7 +1755,7 @@ export const register: Register = (on, options) => {
                 {ex.status ? <Text color={MUTED}>{ex.status}</Text> : null}
               </Box>
             ) : (
-              <Client key="head" module="./rows.tsx" props={{ rows: [head], active: '', activeBg: '', hoverBg: '', tones: TONES, spinner } satisfies RowsProps} />
+              <Client key="head" module="./rows.tsx" props={{ rows: [head], active: '', activeBg: '', hoverBg: '', tones: TONES } satisfies RowsProps} />
             )}
           </Box>
           {native ? toggles : null}
@@ -1759,7 +1763,7 @@ export const register: Register = (on, options) => {
         <Box flexDirection="row" alignItems="center" marginTop={1} marginBottom={1} gap={1}>
           <Box flexGrow={1} flexShrink={1} width="100%">
             {work && !ex.query ? (
-              <Client key="working" module="./rows.tsx" props={{ rows: [{ id: '', left: [{ t: 'Claude is working in Fabric...', sh: work.tone }], right: [] }], active: '', activeBg: '', hoverBg: '', tones: TONES, spinner } satisfies RowsProps} />
+              <Client key="working" module="./rows.tsx" props={{ rows: [{ id: '', left: [{ t: 'Claude is working in Fabric...', sh: work.tone }], right: [] }], active: '', activeBg: '', hoverBg: '', tones: TONES } satisfies RowsProps} />
             ) : (
               <Input
                 key="q"
@@ -1775,11 +1779,11 @@ export const register: Register = (on, options) => {
           {native ? null : toggles}
         </Box>
         {pending ? (
-          <Client key="pending" module="./rows.tsx" props={{ rows: [{ id: '', left: [{ t: pending + ' ', c: MUTED }, { t: '', spin: true, c: TITLE_COLOR }], right: [] }], active: '', activeBg: '', hoverBg: '', tones: TONES, spinner } satisfies RowsProps} />
+          <Client key="pending" module="./rows.tsx" props={{ rows: [{ id: '', left: [{ t: pending + ' ', c: MUTED }, { t: '', spin: true, c: TITLE_COLOR }], right: [] }], active: '', activeBg: '', hoverBg: '', tones: TONES } satisfies RowsProps} />
         ) : null}
         {!ex.setup && ex.nodes.length === 0 && <Text color={MUTED}>{ex.target ? 'nothing loaded yet' : HINT}</Text>}
         {ex.setup ? (
-          <Client key="setup" module="./rows.tsx" props={{ rows: setupRows(ex.setup, tier, width), active: '', activeBg: '', hoverBg: '#2d2f33', tones: TONES, spinner } satisfies RowsProps} />
+          <Client key="setup" module="./rows.tsx" props={{ rows: setupRows(ex.setup, tier, width), active: '', activeBg: '', hoverBg: '#2d2f33', tones: TONES } satisfies RowsProps} />
         ) : native ? (
           <Box key="rows" flexDirection="column">
             {pinned.map(nativeRow)}
@@ -1787,7 +1791,7 @@ export const register: Register = (on, options) => {
             {shown.map(nativeRow)}
           </Box>
         ) : (
-          <Client key="rows" module="./rows.tsx" props={{ rows: specs, active: ex.cursor, activeBg: '#3e4451', hoverBg: '#2d2f33', tones: TONES, spinner, ...(bar ? { bar } : {}) } satisfies RowsProps} />
+          <Client key="rows" module="./rows.tsx" props={{ rows: specs, active: ex.cursor, activeBg: '#3e4451', hoverBg: '#2d2f33', tones: TONES, ...(bar ? { bar } : {}) } satisfies RowsProps} />
         )}
         <Box flexGrow={1} />
         {shownNode && ex.detail.length > 0 && (
