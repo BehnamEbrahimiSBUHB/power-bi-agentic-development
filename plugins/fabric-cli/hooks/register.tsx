@@ -8,7 +8,7 @@ import { SETTING_DOCS } from './setting-data'
 import type { RowSpec, RowsProps, Seg } from './rows'
 import type { ZoneProps } from './zone'
 import { ancestors, EMPTY, empty, emptyMark, isLoaded, merge, type Row, visible } from './tree'
-import { type ApiFolder, type ApiItem, folderTree, inOneLake, modelOf, parseChildren, parseOneLake, parseWorkspaces, PLACEHOLDER, typeLabel } from './fabric'
+import { type ApiFolder, type ApiItem, folderTree, inOneLake, itemUrl, modelOf, parseChildren, parseOneLake, parseWorkspaces, PLACEHOLDER, typeLabel } from './fabric'
 import { FAB_TONE, type FabKind, fabCalls, fabGuids, fabKind, fabPositionals, fabWorkspaces, type Invocation, invocations, join, modelFromConnection, posix, queryOf, targetLabel, tokenize, useDrives } from './parse'
 import { fabTouched } from './touch'
 import { COPY, REFRESH, runFailure, setupOf, setupRows, spawnFailure } from './setup'
@@ -582,8 +582,14 @@ const settingOf = new Map<string, Setting>()
 const TENANT = '#tenant'
 const TOGGLE = 'toggle:'
 const PROPS = 'props:toggle'
-let propsOpen = true
-const TOGGLE_COLOR: Record<string, string> = { domains: '#c4b5fd', capacities: '#5eead4' }
+let propsOpen = false
+const TOGGLE_COLOR: Record<string, string> = { domains: '#c4b5fd', capacities: '#5eead4', find: '#fbbf24' }
+const FIND = 'F:'
+type Hit = { name: string; id: string; type: string; workspace: string; workspace_id: string }
+let findMode = false
+let findQuery = ''
+let findHits: Hit[] | null = null
+let finding = false
 
 let nativeScroll = false
 const optimistic = new Map<string, boolean>()
@@ -1001,6 +1007,79 @@ function withOptimistic(ex: Explorer): Explorer {
   return { ...ex, expanded: [...open], cursor: pressedCursor || ex.cursor }
 }
 
+function setFindQuery($: EngineInterface, v: string): void {
+  findQuery = v
+  $.ui.invalidate('ui.render')
+}
+
+function toggleFind($: EngineInterface): void {
+  findMode = !findMode
+  findHits = null
+  findQuery = ''
+  finding = false
+  $.ui.invalidate('ui.render')
+  if (findMode) {
+    quiet(
+      get($)
+        .then(ex => openPane($, { id: PANE, title: titleFor(ex.target), focus: true }))
+        .then(() => $.ui.focus({ requestId: PANE, key: 'q' })),
+    )
+  }
+}
+
+async function runFind($: EngineInterface, query: string): Promise<void> {
+  findQuery = query
+  if (!query.trim()) {
+    findHits = null
+    $.ui.invalidate('ui.render')
+    return
+  }
+  finding = true
+  $.ui.invalidate('ui.render')
+  try {
+    const body = jsonOf<{ result?: { data?: Hit[] } }>(await fabRaw($, ['find', query.trim(), '-l', '--output_format', 'json'], true))
+    if (findQuery === query) findHits = (body?.result?.data ?? []).filter(h => h.id && h.name && h.type)
+  } catch (err) {
+    if (findQuery === query) {
+      findHits = []
+      await patchView($, () => ({ status: errorText(err) }))
+    }
+  } finally {
+    if (findQuery === query) finding = false
+    $.ui.invalidate('ui.render')
+  }
+}
+
+async function revealHit($: EngineInterface, h: Hit): Promise<void> {
+  findMode = false
+  findHits = null
+  findQuery = ''
+  $.ui.invalidate('ui.render')
+  let ex = await get($)
+  const ws = wsNode(ex.nodes, h.workspace)
+  if (!ws) {
+    await patchView($, () => ({ status: `${h.workspace} is not in the tree` }))
+    return
+  }
+  if (!isLoaded(ex.nodes, ws.id)) await expandFabric($, ws, true)
+  ex = await get($)
+  const target = ex.nodes.find(n => n.kind === h.type && n.name === h.name && ancestors(ex.nodes, n.id).includes(ws.id))
+  const open = target ? ancestors(ex.nodes, target.id) : [...ancestors(ex.nodes, ws.id), ws.id]
+  await patch($, cur => ({ expanded: [...new Set([...cur.expanded, ...open])], cursor: (target ?? ws).id, scroll: null }))
+  if (target) await select($, target)
+}
+
+function pressHit($: EngineInterface, index: number): void {
+  const h = findHits?.[index]
+  if (!h) return
+  const now = Date.now()
+  const key = `${FIND}${h.id}`
+  const isDouble = lastPress.key === key && now - lastPress.at < DOUBLE_MS
+  lastPress = { key: isDouble ? '' : key, at: now }
+  if (isDouble) quiet(openUrl($, itemUrl(h.workspace_id, h.type, h.id)))
+  else quiet(revealHit($, h))
+}
+
 function pressNow($: EngineInterface, n: TreeNode, r: Row): void {
   const now = Date.now()
   const isDouble = lastPress.key === n.id && now - lastPress.at < DOUBLE_MS
@@ -1340,6 +1419,14 @@ export const register: Register = (on, options) => {
         $.ui.invalidate('ui.render')
         return {}
       }
+      if (id.startsWith(FIND)) {
+        pressHit($, Number(id.slice(FIND.length)))
+        return {}
+      }
+      if (id === `${TOGGLE}find`) {
+        toggleFind($)
+        return {}
+      }
       if (id === `${TOGGLE}domains`) quiet(toggleDomains($))
       else if (id === `${TOGGLE}capacities`) quiet(toggleCapacity($))
       else if (id) {
@@ -1355,6 +1442,7 @@ export const register: Register = (on, options) => {
       const tab = (e.data as { tab?: unknown }).tab
       if (tab === `${TOGGLE}domains`) quiet(toggleDomains($))
       else if (tab === `${TOGGLE}capacities`) quiet(toggleCapacity($))
+      else if (tab === `${TOGGLE}find`) toggleFind($)
       return {}
     }
     if (e.requestId === PANE && e.element === 'setup' && e.data && typeof e.data === 'object') {
@@ -1376,6 +1464,10 @@ export const register: Register = (on, options) => {
     if (typeof data.copy === 'string') {
       const n = ex.nodes.find(x => x.id === data.copy)
       if (n) await copyOf($, n.path || n.name, e.surface)
+      return {}
+    }
+    if (typeof data.press === 'string' && data.press.startsWith(FIND)) {
+      pressHit($, Number(data.press.slice(FIND.length)))
       return {}
     }
     if (typeof data.press === 'string') {
@@ -1523,7 +1615,22 @@ export const register: Register = (on, options) => {
       return { id: n.kind === 'placeholder' || n.kind === EMPTY ? '' : n.id, left: clean(left), right }
     }
     const note = (text: string): RowSpec => ({ id: '', left: [{ t: text, c: '#6e6e7a' }], right: [] })
-    const specs: RowSpec[] = [...pinned.map(rowSpec), ...(pinned.length > 0 ? [note('  ⋮')] : []), ...shown.map(rowSpec)]
+    const hitNode = (h: Hit): TreeNode => ({ id: '', parent: '', kind: h.type, name: h.name, path: '', hidden: false, sig: '', note: '' })
+    const hitNote = (h: Hit) => `${h.workspace} - ${typeLabel(h.type)}`
+    const findSpecs: RowSpec[] | null = !findMode
+      ? null
+      : finding
+        ? [{ id: '', left: [{ t: '', spin: true }, { t: ` Searching Fabric for "${findQuery.trim()}"`, c: '#6e6e7a' }], right: [] }]
+        : findHits === null
+          ? [note('  Type a name and press Enter to search every workspace')]
+          : findHits.length === 0
+            ? [note(`  No matches for "${findQuery.trim()}"`)]
+            : findHits.map((h, i) => {
+                const g = glyph(hitNode(h), tier)
+                const tail = hitNote(h)
+                return { id: `${FIND}${i}`, left: clean([{ t: ' ' }, { t: g.char + ' ', c: g.color }, { t: clip(h.name, Math.max(4, width - tail.length - 6)), c: g.label }]), right: [{ t: ` ${tail}`, c: '#6e6e7a' }] }
+              })
+    const specs: RowSpec[] = findSpecs ?? [...pinned.map(rowSpec), ...(pinned.length > 0 ? [note('  ⋮')] : []), ...shown.map(rowSpec)]
     const barSize = Math.max(1, Math.round((specs.length * shown.length) / Math.max(1, rows.length)))
     const bar =
       rows.length > shown.length + pinned.length
@@ -1632,6 +1739,7 @@ export const register: Register = (on, options) => {
       : []
     const toggles = (
       <Box flexDirection="row" alignItems="center" gap={native ? 1 : 2}>
+        {ex.target && toggle('find', findMode, 'ui:search', 'Fabric search', '\u{f0349}', '⌕')}
         {ex.target && toggle('domains', ex.byDomain !== false, 'domain', 'domains', '\u{f0ac}', '◇')}
         {ex.target && toggle('capacities', ex.byCapacity === true, 'capacity', 'capacities', '\u{f04c5}', '◔')}
         {rootNode && <Button key="up" plain dimColor label={icon('\u{f005d}', '↑')} onPress={() => quiet(goUp($))} />}
@@ -1734,7 +1842,31 @@ export const register: Register = (on, options) => {
           ]
         : []
       const headRows = 4 + (pending ? 1 : 0) + (!ex.setup && ex.nodes.length === 0 ? 1 : 0)
-      const lines = at >= 0 ? rows.flatMap((r, i) => (i === at ? [nativeRow(r), ...propLines] : [nativeRow(r)])) : rows.map(nativeRow)
+      const findRow = (h: Hit, i: number) => (
+        <Box key={`fh:${h.id}`} position="relative" height={1} overflow="hidden" flexDirection="row" alignItems="center" gap={1} hover={{ backgroundColor: '#232529' }}>
+          {icon16(FABRIC_SVG[h.type], typeLabel(h.type), { t: glyph(hitNode(h), tier).char, c: glyph(hitNode(h), tier).color }, `fi:${h.id}`)}
+          <Text wrap="truncate-end">{h.name}</Text>
+          <Box flexGrow={1} />
+          <Text color={MUTED} wrap="truncate-end">{hitNote(h)}</Text>
+          <Box position="absolute" top={0} left={0} right={0} bottom={0}>
+            <Client key={`z:${FIND}${i}`} module="./zone.tsx" props={{ id: `${FIND}${i}` } satisfies ZoneProps} width="100%" height="100%" />
+          </Box>
+        </Box>
+      )
+      const findLines = !findMode
+        ? null
+        : finding
+          ? [
+              <Box key="fh:busy" height={1}>
+                <Client key="fh:spin" module="./rows.tsx" props={{ rows: [{ id: '', left: [{ t: '', spin: true }, { t: ` Searching Fabric for "${findQuery.trim()}"`, c: MUTED }], right: [] }], active: '', activeBg: '', hoverBg: '', tones: TONES } satisfies RowsProps} />
+              </Box>,
+            ]
+          : findHits === null
+            ? [<Text key="fh:hint" color={MUTED}>Type a name and press Enter to search every workspace</Text>]
+            : findHits.length === 0
+              ? [<Text key="fh:none" color={MUTED}>{`No matches for "${findQuery.trim()}"`}</Text>]
+              : findHits.map(findRow)
+      const lines = findLines ?? (at >= 0 ? rows.flatMap((r, i) => (i === at ? [nativeRow(r), ...propLines] : [nativeRow(r)])) : rows.map(nativeRow))
       const offset = e.props.scroll?.offset ?? 0
       const first = Math.max(0, offset - headRows - body)
       const last = Math.min(lines.length, offset - headRows + body * 2)
@@ -1752,10 +1884,10 @@ export const register: Register = (on, options) => {
             <Box flexGrow={1} flexShrink={1} width="100%">
               <Input
                 key="q"
-                placeholder="Filter, or Enter to jump"
-                value={ex.query}
-                onInput={(v: string) => quiet(patchView($, () => ({ query: v })))}
-                onSubmit={(v: string) => quiet(patch($, cur => jumpTo(cur, v)))}
+                placeholder={findMode ? 'Search all of Fabric, Enter to search' : 'Filter, or Enter to jump'}
+                value={findMode ? findQuery : ex.query}
+                onInput={(v: string) => (findMode ? setFindQuery($, v) : quiet(patchView($, () => ({ query: v }))))}
+                onSubmit={(v: string) => quiet(findMode ? runFind($, v) : patch($, cur => jumpTo(cur, v)))}
               />
             </Box>
             {ex.query ? <Button key="clearq" plain dimColor label="×" onPress={() => quiet(patchView($, () => ({ query: '' })))} /> : null}
@@ -1805,11 +1937,11 @@ export const register: Register = (on, options) => {
             ) : (
               <Input
                 key="q"
-                placeholder="Filter, or Enter to jump"
+                placeholder={findMode ? 'Search all of Fabric, Enter to search' : 'Filter, or Enter to jump'}
                 autoFocus
-                value={ex.query}
-                onInput={(v: string) => quiet(patchView($, () => ({ query: v })))}
-                onSubmit={(v: string) => quiet(patch($, cur => jumpTo(cur, v)))}
+                value={findMode ? findQuery : ex.query}
+                onInput={(v: string) => (findMode ? setFindQuery($, v) : quiet(patchView($, () => ({ query: v }))))}
+                onSubmit={(v: string) => quiet(findMode ? runFind($, v) : patch($, cur => jumpTo(cur, v)))}
               />
             )}
           </Box>
