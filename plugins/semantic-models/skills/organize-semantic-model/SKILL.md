@@ -62,11 +62,13 @@ Hide what report authors should not drag into a visual: surrogate and foreign ke
 
 ## Pass 7: descriptions
 
-Every visible table, column, measure, hierarchy and function gets a description. As few words as possible, as many as necessary: only what the name does not already say (format, an example value, grain, exclusions, unit or currency, an acronym spelled out, what a measure aggregates). Fragments are fine; do not restate the name, the table or its relationships.
+Every visible table, column, measure, hierarchy and function gets a description. As few words as possible, as many as necessary: only what the name does not already say (format, an example value, grain, exclusions, unit or currency, an acronym spelled out, what a measure aggregates). Do not restate the name, the table or its relationships.
 
-- `Month Label`: "e.g. Mar 2025."
-- `Month Sort`: "YYYYMM, e.g. 202503. Sorts Month Label."
-- `Net Sales`: "After discounts and returns, local currency. Excludes freight and taxes."
+Write descriptions and `context` annotations about 80% of the way to ASD-STE100 Simplified Technical English: short sentences, one fact per sentence, simple common words, active voice and present tense, no Latin abbreviations (`Example:`, not `e.g.`). Leave field names, product names, codes and format patterns as they are. In descriptions, put two or more facts on separate lines as `- ` bullets; one fact stays a single line.
+
+- `Month Label`: "Example: Mar 2025"
+- `Month Sort`: "- Format: YYYYMM\n- Example: 202503\n- Sorts Month Label"
+- `Net Sales`: "Invoice value after discounts and returns.\n- Local currency\n- Does not include freight or taxes"
 
 ## Pass 8: format strings
 
@@ -78,7 +80,7 @@ Set `DataCategory` where it changes client behavior: geography (`Country`, `Stat
 
 ## Pass 10: context annotation
 
-Add an annotation named `context` (`obj.SetAnnotation("context", "...")`) to objects whose purpose a reader would not guess: sort keys, role-playing keys, helper tables, columns that exist for RLS or a calculation group, disconnected parameter tables, anything kept for a downstream dependency. A few words on why it exists and what uses it, for example "Sort key for Month Label."
+Add an annotation named `context` (`obj.SetAnnotation("context", "...")`) to objects whose purpose a reader would not guess: sort keys, role-playing keys, helper tables, columns that exist for RLS or a calculation group, disconnected parameter tables, anything kept for a downstream dependency. A few words in the pass 7 style on why it exists and what uses it, for example "Sort key for Month Label."
 
 ## Pass 11: calculated tables and columns
 
