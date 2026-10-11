@@ -1254,3 +1254,61 @@ test('capacities group the workspaces, and an open workspace counts its items on
   runHook = null
   await ui.unmount()
 })
+
+test('the tenant heads the tree, and Tenant settings lists every setting by group with its state', { timeoutMs: 20_000 }, async ($, on) => {
+  const ran: Ran = []
+  const { clock } = world(on, { HOME: '/home/k' }, ran)
+  runHook = argv => {
+    const ok = (stdout: string) => ({ value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
+    if (argv[1] === 'api' && argv[2] === 'admin/tenantsettings')
+      return ok(JSON.stringify({ status_code: 200, text: { tenantSettings: [
+        { settingName: 'AllowExport', title: 'Users can export', enabled: true, tenantSettingGroup: 'Export and sharing settings', enabledSecurityGroups: [{ name: 'Analysts' }] },
+        { settingName: 'Publish', title: 'Publish to web', enabled: false, tenantSettingGroup: 'Export and sharing settings' },
+      ] } }))
+    return null
+  }
+  const ui = await open($, clock, 'terminal')
+  let rows = (await rowsOf(ui)).rows
+  expect(rows[0].id).toBe('#tenant')
+  expect(rows[1].id).toBe('TS:')
+  await ui.post({ press: 'TS:' }, { in: 'rows' })
+  await clock.settle()
+  await ui.post({ press: 'TS:Export and sharing settings' }, { in: 'rows' })
+  await clock.settle()
+  rows = (await rowsOf(ui)).rows
+  const text = JSON.stringify(rows)
+  expect(text).toContain('1 of 2 on')
+  expect(text).toContain('Users can export')
+  expect(text).toContain('Publish to web')
+  await ui.post({ press: 'TS:Export and sharing settings/AllowExport' }, { in: 'rows' })
+  await clock.settle()
+  const drawn = JSON.stringify(await ui.drawn())
+  expect(drawn).toContain('Analysts')
+  await ui.post({ press: '#tenant' }, { in: 'rows' })
+  await clock.settle()
+  expect((await rowsOf(ui)).rows.length).toBe(1)
+  runHook = null
+  await ui.unmount()
+})
+
+test('a lakehouse on a paused capacity says so instead of staying empty', { timeoutMs: 20_000 }, async ($, on) => {
+  const ran: Ran = []
+  const { clock } = world(on, { HOME: '/home/k' }, ran)
+  domainsOn = true
+  runHook = argv => {
+    const ok = (stdout: string) => ({ value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
+    if (argv[1] === 'ls' && argv[2] === '/.capacities') return ok(JSON.stringify({ result: { data: [{ name: 'small.Capacity', id: UUID(500), state: 'Inactive' }] } }))
+    if (argv[1] === 'api' && argv[2] === 'workspaces') return ok(JSON.stringify({ status_code: 200, text: { value: WORKSPACES.map(w => ({ id: w.id, displayName: w.name, capacityId: UUID(500) })) } }))
+    if (argv[1] === 'ls' && argv[2] === '/WS00.Workspace/LH.Lakehouse') return { value: { exitCode: 1, stdout: '', stderr: 'x ls: [NotFound] The requested resource could not be found', isStdoutTruncated: false, isStderrTruncated: false } }
+    return null
+  }
+  const ui = await open($, clock, 'terminal')
+  await ui.post({ press: 'W:WS00' }, { in: 'rows' })
+  await clock.settle()
+  await ui.post({ press: 'W:WS00/LH.Lakehouse' }, { in: 'rows' })
+  await clock.settle()
+  expect(JSON.stringify((await rowsOf(ui)).rows)).toContain('capacity small is paused, so OneLake is unavailable')
+  runHook = null
+  domainsOn = false
+  await ui.unmount()
+})
