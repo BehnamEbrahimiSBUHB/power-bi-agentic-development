@@ -36,8 +36,8 @@ const TONES: Record<string, { bright: string[]; dim: string[] }> = {
   purple: { bright: ['#a855f7', '#c084fc', '#d8b4fe', '#f3e8ff'], dim: ['#581c87', '#6b21a8', '#8b47c4', '#a874d6'] },
 }
 const FONT_SCRIPT =
-  'if command -v fc-list >/dev/null 2>&1; then f=$(fc-list ":charset=$1" file | head -n1 | cut -d: -f1); ' +
-  'else f=$(ls "$HOME"/Library/Fonts/*"$2"* /Library/Fonts/*"$2"* 2>/dev/null | head -n1); fi; ' +
+  'f=; command -v fc-list >/dev/null 2>&1 && f=$(fc-list ":charset=$1" file 2>/dev/null | head -n1 | cut -d: -f1); ' +
+  '[ -n "$f" ] || f=$(ls "$HOME"/Library/Fonts/*"$2"* /Library/Fonts/*"$2"* "$HOME"/.local/share/fonts/*"$2"* 2>/dev/null | head -n1); ' +
   '[ -n "$f" ] || { echo missing; exit 0; }; m=$(stat -c %Z "$f" 2>/dev/null || stat -f %c "$f"); p=$PPID; ' +
   'while [ -n "$p" ] && [ "$p" -gt 1 ]; do c=$(ps -o comm= -p "$p" 2>/dev/null); c=$(basename "$c" 2>/dev/null | tr -d " "); case "$c" in ' +
   'ghostty|kitty|alacritty|Alacritty|foot|footclient|wezterm-gui|konsole|gnome-terminal-|xterm|urxvt|st|Terminal|iTerm2) ' +
@@ -1356,6 +1356,8 @@ export const register: Register = (on, options) => {
     if (terminalOnly && e.presentation && !e.presentation.isFullscreen) return { text: 'The Fabric pane shows in the sidebar, which needs the fullscreen layout. Run /tui fullscreen, then /fabric-pane.' }
     if (terminalOnly && e.presentation && e.presentation.columns < 110) return { text: 'The Fabric pane shows in the sidebar, which needs a terminal at least 110 columns wide. Widen it, then run /fabric-pane.' }
     noDock = false
+    fellBack = false
+    quiet(detectGlyphs($).then(() => $.ui.invalidate('ui.render')))
     const workspace = wholeArg(e.args)
     await point($, targetOf(fabContext.env), 'asked', true)
     await refresh($)
