@@ -1316,3 +1316,24 @@ test('a lakehouse on a paused capacity says so instead of staying empty', { time
   domainsOn = false
   await ui.unmount()
 })
+
+test('macOS app: a click opens the row at once with a loading spinner, before fab answers', { timeoutMs: 20_000 }, async ($, on) => {
+  const ran: Ran = []
+  const { clock } = world(on, { HOME: '/Users/k' }, ran)
+  const slow = held()
+  runHook = argv => (argv[1] === 'ls' && argv[2] === '/WS00.Workspace' ? slow.until.then(() => done(listed('WS00.Workspace'))) : null)
+  const ui = await open($, clock, 'desktop')
+  const all = (n: any, type: string): any[] => [...(n?.type === type ? [n] : []), ...(n?.children ?? []).flatMap((c: any) => all(c, type))]
+  void ui.press({ key: 'r:W:WS00' })
+  await clock.advance(10)
+  const drawn = await ui.drawn()
+  expect(all(drawn, 'Svg').some((s: any) => s.props.alt === 'collapse')).toBe(true)
+  expect(JSON.stringify(drawn)).toContain('Loading…')
+  expect(all(drawn, 'Svg').every((s: any) => s.props.alt.length > 0)).toBe(true)
+  slow.release()
+  await clock.settle()
+  expect(JSON.stringify(await ui.drawn())).not.toContain('Loading…')
+  expect(await ui.find({ key: 'r:W:WS00/Sales.SemanticModel' })).toBeDefined()
+  runHook = null
+  await ui.unmount()
+})

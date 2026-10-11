@@ -520,6 +520,8 @@ function skuLabel(sku: string): string {
 type Setting = { settingName: string; title?: string; enabled?: boolean; tenantSettingGroup?: string; canSpecifySecurityGroups?: boolean; delegateToWorkspace?: boolean; delegateToCapacity?: boolean; delegateToDomain?: boolean; enabledSecurityGroups?: { name?: string }[]; excludedSecurityGroups?: { name?: string }[] }
 const settingOf = new Map<string, Setting>()
 const TENANT = '#tenant'
+const optimistic = new Map<string, boolean>()
+let pressedCursor = ''
 const TENANT_CLOSED = '#tenant-closed'
 const SETTINGS = 'TS:'
 let tenantAsked = false
@@ -885,6 +887,39 @@ async function openLocal($: EngineInterface, ex: Explorer, n: TreeNode): Promise
 
 function tenantNode(): TreeNode {
   return { id: TENANT, parent: '', kind: 'tenant', name: tenantName || 'Fabric tenant', path: '', hidden: false, sig: tenantId, note: '' }
+}
+
+const ROW_PX = 24
+const SVG_NS = 'http://www.w3.org/2000/svg'
+
+function guides(depth: number): string {
+  const lines = Array.from({ length: depth }, (_, i) => `<rect x="${i * 16 + 7.5}" y="0" width="1" height="${ROW_PX}" fill="#34343c"/>`).join('')
+  return `<svg xmlns="${SVG_NS}" width="${depth * 16}" height="${ROW_PX}" viewBox="0 0 ${depth * 16} ${ROW_PX}">${lines}</svg>`
+}
+
+function withOptimistic(ex: Explorer): Explorer {
+  if (optimistic.size === 0 && !pressedCursor) return ex
+  const open = new Set(ex.expanded)
+  for (const [id, isOpen] of optimistic) {
+    if (id === TENANT) isOpen ? open.delete(TENANT_CLOSED) : open.add(TENANT_CLOSED)
+    else isOpen ? open.add(id) : open.delete(id)
+  }
+  return { ...ex, expanded: [...open], cursor: pressedCursor || ex.cursor }
+}
+
+function pressNow($: EngineInterface, n: TreeNode, r: Row): void {
+  if (!r.leaf) optimistic.set(n.id, !r.open)
+  pressedCursor = n.id
+  $.ui.invalidate('ui.render')
+  quiet(
+    press($, n)
+      .catch((err: unknown) => patchView($, () => ({ status: errorText(err) })))
+      .finally(() => {
+        optimistic.delete(n.id)
+        if (pressedCursor === n.id) pressedCursor = ''
+        $.ui.invalidate('ui.render')
+      }),
+  )
 }
 
 function treeRows(ex: Explorer): Row[] {
@@ -1253,7 +1288,7 @@ export const register: Register = (on, options) => {
     const tier = tierFor(e.surface)
     if (e.surface === 'terminal' && tier === 'plain' && glyphSetting === 'auto') fellBack = true
     const { Box, Text, Button, Input, Client } = $.ui.resolve(e)
-    const ex = await get($)
+    const ex = withOptimistic(await get($))
     if (ex.target && !tenantName && !tenantAsked) {
       tenantAsked = true
       quiet(loadTenant($).then(() => $.ui.invalidate('ui.render')))
@@ -1357,24 +1392,33 @@ export const register: Register = (on, options) => {
       const g = glyph(n, 'plain')
       const note = noteOf(r)
       const faded = n.hidden || n.kind === PLACEHOLDER || n.kind === EMPTY
-      const label = clip(n.name, Math.max(4, width - r.depth * 2 - 8 - note.length))
+      const room = Math.max(4, width - r.depth * 2 - 8 - note.length)
+      const label = clip(n.name, room).padEnd(room)
       const busy = busyTone(n.id)
+      const spinning = n.kind === PLACEHOLDER && n.name === 'loading…'
       return (
         <Box key={`n:${n.id}`} flexDirection="row" alignItems="center" backgroundColor={n.id === ex.cursor ? '#2a2d34' : undefined} hover={{ backgroundColor: '#232529' }}>
-          {Svg ? <Svg key={`s:${n.id}`} source={FABRIC_SVG['ui:spacer'] ?? ''} alt="" width={1} height={25} /> : null}
-          {Array.from({ length: r.depth }, (_, i) =>
-            Svg ? <Svg key={`g:${i}`} source={FABRIC_SVG['ui:guide'] ?? ''} alt="" width={16} height={25} /> : (
+          {r.depth > 0 && Svg ? (
+            <Svg key={`g:${n.id}`} source={guides(r.depth)} alt={`level ${r.depth}`} width={r.depth * 16} height={ROW_PX} />
+          ) : (
+            Array.from({ length: r.depth }, (_, i) => (
               <Box key={`g:${i}`} width={2} flexShrink={0}>
                 <Text color={GUIDE}>│</Text>
               </Box>
-            ),
+            ))
           )}
           <Box width={2} flexShrink={0} flexDirection="row" alignItems="center">
             {r.leaf ? null : icon16(FABRIC_SVG[r.open ? 'ui:chevron-down' : 'ui:chevron-right'], r.open ? 'collapse' : 'expand', { t: r.open ? '⌄' : '›', c: MUTED }, `c:${n.id}`)}
           </Box>
           <Box flexDirection="row" alignItems="center" gap={1} flexShrink={1}>
-            {icon16(FABRIC_SVG[n.kind] ?? (n.kind === 'tenant setting' ? FABRIC_SVG[n.note.startsWith('On') ? 'ui:on' : 'ui:off'] : undefined), typeLabel(n.kind), { t: g.char, c: g.color }, `i:${n.id}`)}
-            {faded ? <Text color={MUTED}>{label}</Text> : <Button key={`r:${n.id}`} plain label={label} onPress={() => quiet(press($, n))} />}
+            {spinning ? null : icon16(FABRIC_SVG[n.kind] ?? (n.kind === 'tenant setting' ? FABRIC_SVG[n.note.startsWith('On') ? 'ui:on' : 'ui:off'] : undefined), typeLabel(n.kind), { t: g.char, c: g.color }, `i:${n.id}`)}
+            {spinning ? (
+              <Client key={`ph:${n.id}`} module="./rows.tsx" props={{ rows: [{ id: '', left: [{ t: '', spin: true, c: MUTED }, { t: ' Loading…', c: MUTED }], right: [] }], active: '', activeBg: '', hoverBg: '', tones: TONES, spinner } satisfies RowsProps} />
+            ) : faded ? (
+              <Text color={MUTED}>{n.name}</Text>
+            ) : (
+              <Button key={`r:${n.id}`} plain label={label} onPress={() => pressNow($, n, r)} />
+            )}
             {busy ? <Text color={TONES[busy]?.bright[1]}>…</Text> : null}
           </Box>
           <Box flexGrow={1} />
@@ -1385,14 +1429,9 @@ export const register: Register = (on, options) => {
     const dimmed = (source: string | undefined) => source?.replace(/#[0-9a-fA-F]{6}/g, '#5c5c66')
     const toggle = (key: string, isOn: boolean, svg: string, what: string, nerd: string, plain: string, run: () => void) =>
       native ? (
-        <Box key={`tip:${key}`} flexDirection="row" alignItems="center" position="relative" paddingX={1} borderStyle="round" borderColor={isOn ? '#4b5563' : '#1f1f23'} hover={{ borderColor: isOn ? '#6b7280' : '#3a3a42' }}>
-          {icon16(isOn ? FABRIC_SVG[svg] : dimmed(FABRIC_SVG[svg]), `${isOn ? 'Hide' : 'Show'} ${what}`, { t: plain, c: MUTED }, `ti:${key}`)}
-          <Box position="absolute" top={0} left={0} right={0} bottom={0}>
-            <Button key={key} plain label={'\u2009'} onPress={run} />
-          </Box>
-          <Box position="absolute" top={1} right={0} display="none" hover={{ display: 'flex' }} backgroundColor="#2b2b31" paddingX={1}>
-            <Text wrap="truncate-end">{`${isOn ? 'Hide' : 'Show'} ${what}`}</Text>
-          </Box>
+        <Box key={`tg:${key}`} flexDirection="row" alignItems="center" gap={1} paddingX={1} backgroundColor={isOn ? '#2a2d34' : undefined} hover={{ backgroundColor: isOn ? '#323640' : '#232529' }}>
+          {icon16(isOn ? FABRIC_SVG[svg] : dimmed(FABRIC_SVG[svg]), what, { t: plain, c: MUTED }, `ti:${key}`)}
+          <Button key={key} plain dimColor={!isOn} label={what[0]!.toUpperCase() + what.slice(1)} onPress={run} />
         </Box>
       ) : (
         <Button key={key} plain dimColor={!isOn} label={`${icon(nerd, plain)} `} onPress={run} />
