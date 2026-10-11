@@ -4,7 +4,9 @@ import { openCommand } from './open'
 import type { Explorer, Onboard, Target, TreeNode, Work } from '../types'
 import { glyph, titleGlyph as dbTitle, type Tier } from './icons'
 import type { RowSpec, RowsProps, Seg } from './rows'
-import { ancestors, EMPTY, empty, emptyMark, isLoaded, merge, visible } from './tree'
+import { UI_SVG } from './svg-data'
+import type { ZoneProps } from './zone'
+import { ancestors, EMPTY, empty, emptyMark, isLoaded, merge, type Row, visible } from './tree'
 import { chainOf, children, hostFrom, listCalls, PLACEHOLDER, roots } from './databricks'
 import { DB_TONE, dbKind, dbProfile, dbTargets, type Invocation, invocations, positionals, posix, tokenize, useDrives } from './parse'
 
@@ -29,7 +31,11 @@ const TONES: Record<string, { bright: string[]; dim: string[] }> = {
   pink: { bright: ['#ec4899', '#f472b6', '#f9a8d4', '#fce7f3'], dim: ['#831843', '#9d174d', '#b8406f', '#cf6f93'] },
   purple: { bright: ['#a855f7', '#c084fc', '#d8b4fe', '#f3e8ff'], dim: ['#581c87', '#6b21a8', '#8b47c4', '#a874d6'] },
 }
-const PLAIN_SPINNER = ['|', '/', '-', '\\']
+const MUTED = '#6e6e7a'
+const PROPS = 'props:toggle'
+const ROW_PX = 24
+const SVG_NS = 'http://www.w3.org/2000/svg'
+const NOTE_LABEL: Record<string, string> = { notebook: 'Language', catalog: 'Type', table: 'Type', view: 'Type', volume: 'Type', cluster: 'State', warehouse: 'State', pipeline: 'State', app: 'State' }
 const TONE_RANK = ['orange', 'pink', 'teal', 'purple']
 const ACCENT = '#5b9bd5'
 const LOGIN = 'databricks auth login --host <your workspace URL>'
@@ -38,8 +44,8 @@ const UNREACHABLE =
 const SIGNED_OUT =
   /(?:status|code|http)\W{0,3}401\b|\b401 unauthorized|\bunauthorized\b|unauthenticated|not authenticated|not logged in|no credentials|cannot configure default credentials|cannot get access token|(?:invalid|expired) (?:access |refresh |oauth )?token|token (?:is |has )?(?:invalid|expired|not set)|credential was not sent|has no \S+ profile configured|no configuration file found|no profiles configured|cannot load databricks config|databricks auth login/i
 const FONT_SCRIPT =
-  'if command -v fc-list >/dev/null 2>&1; then f=$(fc-list ":charset=$1" file | head -n1 | cut -d: -f1); ' +
-  'else f=$(ls "$HOME"/Library/Fonts/*"$2"* /Library/Fonts/*"$2"* 2>/dev/null | head -n1); fi; ' +
+  'f=; command -v fc-list >/dev/null 2>&1 && f=$(fc-list ":charset=$1" file 2>/dev/null | head -n1 | cut -d: -f1); ' +
+  '[ -n "$f" ] || f=$(ls "$HOME"/Library/Fonts/*"$2"* /Library/Fonts/*"$2"* "$HOME"/.local/share/fonts/*"$2"* 2>/dev/null | head -n1); ' +
   '[ -n "$f" ] || { echo missing; exit 0; }; m=$(stat -c %Z "$f" 2>/dev/null || stat -f %c "$f"); p=$PPID; ' +
   'while [ -n "$p" ] && [ "$p" -gt 1 ]; do c=$(ps -o comm= -p "$p" 2>/dev/null); c=$(basename "$c" 2>/dev/null | tr -d " "); case "$c" in ' +
   'ghostty|kitty|alacritty|Alacritty|foot|footclient|wezterm-gui|konsole|gnome-terminal-|xterm|urxvt|st|Terminal|iTerm2) ' +
@@ -61,6 +67,8 @@ let noDock = false
 let inflight: Promise<void> | null = null
 let queued: Promise<void> | null = null
 let platform: Promise<'linux' | 'darwin' | 'win32'> | null = null
+let propsOpen = false
+let nativeScroll = false
 const hosts = new Map<string, string>()
 
 function osName($: EngineInterface): Promise<'linux' | 'darwin' | 'win32'> {
@@ -359,13 +367,18 @@ async function goHome($: EngineInterface): Promise<void> {
 }
 
 async function press($: EngineInterface, n: TreeNode): Promise<void> {
-  const now = await $.clock.now()
+  const now = Date.now()
   const isDouble = lastPress.key === n.id && now - lastPress.at < DOUBLE_MS
   lastPress = { key: isDouble ? '' : n.id, at: now }
   const ex = await get($)
-  if (isDouble && ex.nodes.some(c => c.parent === n.id)) await navigate($, n)
-  else if (isDouble) await openLocal($, ex, n)
-  else await select($, n)
+  if (isDouble && webUrl(ex, n)) await openWeb($, ex, n)
+  else if (isDouble && ex.nodes.some(c => c.parent === n.id)) await navigate($, n)
+  else if (!isDouble) await select($, n)
+}
+
+function guides(depth: number): string {
+  const lines = Array.from({ length: depth }, (_, i) => `<rect x="${i * 16 + 7.5}" y="0" width="1" height="${ROW_PX}" fill="#34343c"/>`).join('')
+  return `<svg xmlns="${SVG_NS}" width="${depth * 16}" height="${ROW_PX}" viewBox="0 0 ${depth * 16} ${ROW_PX}">${lines}</svg>`
 }
 
 async function openWeb($: EngineInterface, ex: Explorer, n: TreeNode): Promise<void> {
@@ -606,7 +619,8 @@ async function select($: EngineInterface, n: TreeNode): Promise<void> {
     return { expanded: [...open], cursor: n.id, selected: n.path ? n.id : cur.selected }
   })
   if (!isLeaf && (await expandNode($, n))) await expandOpen($, n.id)
-  const detail = [`${n.kind.replace(/^section-/, '').replace(/_/g, ' ')} ${n.name}`, ...(n.path ? [`cli: ${n.path}`] : []), ...(n.note ? [n.note] : [])]
+  const kind = n.kind.replace(/^section-/, '').replace(/_/g, ' ')
+  const detail = [`${kind} ${n.name}`, `Type: ${kind}`, ...(n.note ? [`${NOTE_LABEL[n.kind] ?? 'Note'}: ${n.note}`] : []), ...(n.path ? [`Path: ${n.path}`] : []), ...(n.url ? [`URL: ${n.url}`] : [])]
   await patchView($, cur => (cur.cursor === n.id ? { detail } : {}))
 }
 function contextFor(ex: Explorer, n: TreeNode): string {
@@ -730,6 +744,8 @@ export const register: Register = (on, options) => {
     if (terminalOnly && e.presentation && !e.presentation.isFullscreen) return { text: 'The Databricks pane shows in the sidebar, which needs the fullscreen layout. Run /tui fullscreen, then /databricks-pane.' }
     if (terminalOnly && e.presentation && e.presentation.columns < 110) return { text: 'The Databricks pane shows in the sidebar, which needs a terminal at least 110 columns wide. Widen it, then run /databricks-pane.' }
     noDock = false
+    fellBack = false
+    quiet(detectGlyphs($).then(() => $.ui.invalidate('ui.render')))
     const [profile = ''] = tokenize(e.args ?? '')
     await point($, { kind: 'databricks', profile }, 'asked', true)
     await refresh($)
@@ -788,6 +804,20 @@ export const register: Register = (on, options) => {
       if (text) await copyOf($, text, e.surface)
       return {}
     }
+    if (e.requestId === PANE && e.element.startsWith('z:') && e.data && typeof e.data === 'object') {
+      const data = e.data as { zone?: unknown; ctrl?: unknown }
+      const id = typeof data.zone === 'string' ? data.zone : ''
+      if (id === PROPS) {
+        propsOpen = !propsOpen
+        $.ui.invalidate('ui.render')
+        return {}
+      }
+      const ex = await get($)
+      const n = ex.nodes.find(x => x.id === id)
+      if (n && data.ctrl) quiet(openWeb($, ex, n))
+      else if (n) quiet(press($, n))
+      return {}
+    }
     if (e.requestId !== PANE || e.element !== 'rows' || !e.data || typeof e.data !== 'object') return next(e)
     const view = views.get(e.surface) ?? { from: 0, max: 0 }
     const data = e.data as { press?: unknown; key?: unknown; ctrl?: unknown; shift?: unknown; scrollTo?: unknown; copy?: unknown }
@@ -834,7 +864,8 @@ export const register: Register = (on, options) => {
     return {}
   })
 
-  on('ui.scroll', { component: 'Pane', requestId: PANE }, async ($, e) => {
+  on('ui.scroll', { component: 'Pane', requestId: PANE }, async ($, e, next) => {
+    if (nativeScroll) return next(e)
     const view = views.get('terminal') ?? views.get('desktop') ?? { from: 0, max: 0 }
     const ex = await get($)
     const to = Math.max(0, Math.min(view.max, (ex.scroll ?? view.from) + Math.sign(e.by) * Math.max(3, Math.abs(e.by))))
@@ -868,7 +899,11 @@ export const register: Register = (on, options) => {
     }
     const tier = tierFor(e.surface)
     if (e.surface === 'terminal' && tier === 'plain' && glyphSetting === 'auto') fellBack = true
-    const { Box, Text, Button, Input, Client } = $.ui.resolve(e)
+    const table = $.ui.resolve(e)
+    const { Box, Text, Button, Input, Client } = table
+    const Svg = 'Svg' in table ? table.Svg : undefined
+    const native = e.surface === 'desktop' && Boolean(Svg)
+    nativeScroll = native
     const ex = await get($)
     const now = await $.clock.now()
     const busyTone = (id: string) => {
@@ -876,12 +911,16 @@ export const register: Register = (on, options) => {
       return b && now - b.at < BUSY_MAX_MS ? b.tone : ''
     }
     const work = live(ex.work, now) ? ex.work : null
+    const working = work !== null || busyTone(HEADER) !== ''
     const brightSet = new Set(work?.lit ?? [])
     const dimSet = new Set(work?.dim ?? [])
     const width = Math.max(20, e.props.bodyColumns)
     const rows = visible(ex, SORT, rootOf(ex))
-    const detailRows = ex.detail.length ? Math.min(ex.detail.length, DETAIL_ROWS) + 2 : 0
-    const room = Math.max(5, Math.min(WINDOW, (e.props.scroll?.bodyRows ?? 40) - 4 - detailRows))
+    const shownNode = ex.nodes.find(n => n.id === ex.cursor && ex.detail.length > 0) ?? ex.nodes.find(n => n.id === ex.selected)
+    const detail = !ex.onboard && shownNode ? ex.detail : []
+    const empty = !ex.onboard && ex.nodes.length === 0 ? (ex.target ? 'nothing loaded yet' : HINT) : ''
+    const detailRows = detail.length ? Math.min(detail.length, DETAIL_ROWS) + 4 : 0
+    const room = Math.max(5, Math.min(WINDOW, (e.props.scroll?.bodyRows ?? 40) - 4 - detailRows - (empty ? 1 : 0)))
     const focusId = follow && work && work.lit.length ? (work.lit[work.lit.length - 1] ?? ex.cursor) : ex.cursor
     const at = Math.max(0, rows.findIndex(r => r.node.id === focusId))
     const isLit = (id: string) => brightSet.has(id) || dimSet.has(id)
@@ -905,33 +944,31 @@ export const register: Register = (on, options) => {
       from = Math.max(0, Math.min(ex.scroll, max))
       pinned = []
     }
-    views.set(e.surface, { from, max })
+    if (!native) views.set(e.surface, { from, max })
     const shown = rows.slice(from, from + room - pinned.length)
-    const sel = ex.nodes.find(n => n.id === ex.selected)
     const clip = (s: string, max = width) => (s.length > max ? s.slice(0, max - 1) + '…' : s)
-    const spin = (tone: string): Seg => ({ t: ' ', spin: true, b: true, c: TONES[tone]?.bright[1] ?? SHIMMER[1] })
-    const rowSpec = (r: (typeof rows)[number]): RowSpec => {
+    const loadingRow = (n: TreeNode) => n.kind === PLACEHOLDER && n.name === 'loading…'
+    const rowSpec = (r: Row): RowSpec => {
       const n = r.node
       const g = glyph(n, tier)
       const arrow = r.leaf ? '  ' : tier === 'plain' ? (r.open ? '▾ ' : '▸ ') : r.open ? '\u{f47c} ' : '\u{f460} '
       const note = n.note ? ` ${n.note}` : ''
       const cols = Math.max(4, width - r.depth * 2 - 6 - note.length)
-      const isBright = brightSet.has(n.id)
+      const busy = busyTone(n.id)
+      const isBright = brightSet.has(n.id) || busy !== ''
       const isDim = !isBright && dimSet.has(n.id)
       const name = clip(n.name, cols)
-      const faded = n.hidden || n.kind === 'placeholder' || n.kind === EMPTY
-      const tone = work?.tone ?? 'orange'
-      const busy = busyTone(n.id)
+      const faded = n.hidden || n.kind === PLACEHOLDER || n.kind === EMPTY
+      const tone = busy || work?.tone || 'orange'
       const left: Seg[] = [
         { t: '  '.repeat(r.depth) },
         { t: arrow, c: '#7a7a86' },
-        isBright || isDim ? { t: g.char + ' ', sh: tone, dim: isDim, one: true } : { t: g.char + ' ', c: faded ? '#6e6e7a' : g.color },
-        isBright || isDim ? { t: name, sh: tone, dim: isDim, b: isBright } : { t: name, c: faded ? '#6e6e7a' : g.label, b: n.id === ex.selected },
+        ...(loadingRow(n) ? [{ t: '', spin: true }, { t: ' ' }] : [isBright || isDim ? { t: g.char + ' ', sh: tone, dim: isDim, one: true } : { t: g.char + ' ', c: faded ? MUTED : g.color }]),
+        isBright || isDim ? { t: name, sh: tone, dim: isDim, b: isBright } : { t: name, c: faded ? MUTED : g.label, b: n.id === ex.selected },
       ]
-      if (busy) left.push(spin(busy))
-      return { id: n.kind === 'placeholder' || n.kind === EMPTY ? '' : n.id, left: clean(left), right: note ? [{ t: note, c: '#6e6e7a' }] : [] }
+      return { id: n.kind === PLACEHOLDER || n.kind === EMPTY ? '' : n.id, left: clean(left), right: note ? [{ t: note, c: MUTED }] : [] }
     }
-    const note = (text: string): RowSpec => ({ id: '', left: [{ t: text, c: '#6e6e7a' }], right: [] })
+    const note = (text: string): RowSpec => ({ id: '', left: [{ t: text, c: MUTED }], right: [] })
     const specs: RowSpec[] = [...pinned.map(rowSpec), ...(pinned.length > 0 ? [note('  ⋮')] : []), ...shown.map(rowSpec)]
     const barSize = Math.max(1, Math.round((specs.length * shown.length) / Math.max(1, rows.length)))
     const bar =
@@ -940,103 +977,239 @@ export const register: Register = (on, options) => {
         : undefined
     const icon = (nerd: string, fallback: string) => (tier === 'plain' ? fallback : nerd)
     const rootNode = ex.nodes.find(n => n.id === rootOf(ex))
-    const rootName = rootNode ? rootNode.name : ''
+    const headName = rootNode ? rootNode.name : label(ex.target)
     const head: RowSpec = {
       id: '',
-      left: clean([
-        { t: `${titleGlyph(tier)} `, c: TITLE_COLOR },
-        { t: rootName || (label(ex.target)), b: true },
-        ...(ex.status ? [{ t: `  ${ex.status}`, c: '#6e6e7a' }] : []),
-        ...(busyTone(HEADER) ? [spin(busyTone(HEADER))] : []),
-      ]),
+      left: clean([{ t: `${titleGlyph(tier)} `, c: TITLE_COLOR }, { t: headName, b: true }, ...(ex.status ? [{ t: `  ${ex.status}`, c: MUTED }] : [])]),
       right: [],
     }
-    const spinner = tier === 'plain' ? PLAIN_SPINNER : []
+    const icon16 = (source: string | undefined, alt: string, fallback: Seg, key: string) =>
+      native && Svg && source ? <Svg key={key} source={source} alt={alt} width={16} height={16} /> : <Text key={key} color={fallback.c}>{fallback.t}</Text>
+    const rule = (key: string) => <Text key={key} color="#2e2e34" wrap="truncate-end">{'─'.repeat(width)}</Text>
+    const details = detail.slice(1, DETAIL_ROWS).map(l => {
+      const cut = l.indexOf(': ')
+      return { key: cut > 0 ? l.slice(0, cut) : '', value: (cut > 0 ? l.slice(cut + 2) : l).replace(/\s+/g, ' ') }
+    })
+    type Action = { key: string; svg: string; nerd: string; plain: string; label: string; run: (surface: string) => void }
+    const actions: Action[] = shownNode
+      ? [
+          ...(webUrl(ex, shownNode) ? [{ key: 'web', svg: 'ui:open', nerd: '\u{f0379}', plain: '↗', label: 'Open in Databricks', run: () => quiet(openWeb($, ex, shownNode)) }] : []),
+          ...(shownNode.path ? [{ key: 'copy', svg: 'ui:copy', nerd: '\u{f018f}', plain: '⧉', label: 'Copy path', run: (surface: string) => quiet(copyOf($, shownNode.path, surface)) }] : []),
+        ]
+      : []
+    const actionRow = (
+      <Box flexDirection="row" alignItems="center" gap={2}>
+        {actions.map(a => (
+          <Box key={`a:${a.key}`} flexDirection="row" alignItems="center" gap={1}>
+            {native ? icon16(UI_SVG[a.svg], a.label, { t: '', c: MUTED }, `ai:${a.key}`) : null}
+            <Button key={a.key} plain label={native ? a.label : `${icon(a.nerd, a.plain)} ${a.label}`} onPress={p => a.run(p.surface)} />
+          </Box>
+        ))}
+      </Box>
+    )
+    const toggles = (
+      <Box flexDirection="row" alignItems="center" gap={native ? 1 : 2}>
+        {rootNode && <Button key="up" plain dimColor label={icon('\u{f005d}', '↑')} onPress={() => quiet(goUp($))} />}
+        {rootNode && <Button key="home" plain dimColor label={icon('\u{f02dc}', '⌂')} onPress={() => quiet(goHome($))} />}
+        <Button key="refresh" plain dimColor label={icon('\u{f0450}', '↻')} onPress={() => quiet(refresh($))} />
+        <Button key="collapse" plain dimColor label={icon('\u{eac5}', '⊟')} onPress={() => quiet(patchView($, () => ({ expanded: [] })))} />
+        <Text> </Text>
+      </Box>
+    )
+    const search = (focus: boolean) => (
+      <Input
+        key="q"
+        placeholder="Filter, or Enter to jump"
+        {...(focus ? { autoFocus: true as const } : {})}
+        value={ex.query}
+        onInput={(v: string) => quiet(patchView($, () => ({ query: v })))}
+        onSubmit={(v: string) => quiet(patch($, cur => jumpTo(cur, v)))}
+      />
+    )
+    const onboard = ex.onboard ? (
+      <Box flexDirection="column" marginTop={1}>
+        {onboardBlocks(ex.onboard).map((block, b) => (
+          <Box key={`block-${b}`} flexDirection="column" marginTop={b > 0 ? 1 : 0}>
+            {block.map((line, i) =>
+              'title' in line ? (
+                <Text key={`line-${i}`} wrap="wrap">
+                  <Text color={TITLE_COLOR}>{`${icon(line.icon[0], line.icon[1])} `}</Text>
+                  <Text bold>{line.title}</Text>
+                </Text>
+              ) : 'cmd' in line ? (
+                <Box key={`line-${i}`} marginLeft={2}>
+                  <Client
+                    key={`onboard-${b}-${i}`}
+                    module="./rows.tsx"
+                    props={{ rows: [{ id: line.cmd, left: [...(line.label ? [{ t: line.label }] : []), { t: line.cmd, c: ACCENT }], right: [] }], active: '', activeBg: '', hoverBg: '#2d2f33', tones: TONES } satisfies RowsProps}
+                  />
+                </Box>
+              ) : (
+                <Box key={`line-${i}`} marginLeft={2}>
+                  <Text wrap="wrap" dimColor={line.dim}>
+                    {line.text}
+                  </Text>
+                </Box>
+              ),
+            )}
+          </Box>
+        ))}
+      </Box>
+    ) : null
+    if (native) {
+      const body = Math.max(10, e.props.scroll?.bodyRows ?? 30)
+      const lead = (d: number, key: string) => (Svg && d > 0 ? <Svg key={key} source={guides(d)} alt={`level ${d}`} width={d * 16} height={ROW_PX} /> : <Box key={key} width={d * 2} />)
+      const nativeRow = (r: Row) => {
+        const n = r.node
+        const g = glyph(n, 'plain')
+        const faded = n.hidden || n.kind === PLACEHOLDER || n.kind === EMPTY
+        const label = clip(n.name, Math.max(4, width - r.depth * 2 - 8 - n.note.length))
+        const lit = brightSet.has(n.id) || dimSet.has(n.id) || busyTone(n.id) !== ''
+        return (
+          <Box key={`n:${n.id}`} position="relative" height={1} overflow="hidden" flexDirection="row" alignItems="center" backgroundColor={n.id === ex.cursor ? '#2a2d34' : undefined} hover={{ backgroundColor: '#232529' }}>
+            {lead(r.depth, `g:${n.id}`)}
+            <Box width={2} flexShrink={0} flexDirection="row" alignItems="center">
+              {r.leaf ? null : icon16(UI_SVG[r.open ? 'ui:chevron-down' : 'ui:chevron-right'], r.open ? 'collapse' : 'expand', { t: r.open ? '⌄' : '›', c: MUTED }, `c:${n.id}`)}
+            </Box>
+            <Box flexDirection="row" alignItems="center" gap={1} flexShrink={1}>
+              {loadingRow(n) ? (
+                <Client key={`ph:${n.id}`} module="./rows.tsx" props={{ rows: [{ id: '', left: [{ t: '', spin: true }, { t: ' Loading…', c: MUTED }], right: [] }], active: '', activeBg: '', hoverBg: '', tones: TONES } satisfies RowsProps} />
+              ) : (
+                <Text key={`i:${n.id}`} color={g.color}>{g.char}</Text>
+              )}
+              {loadingRow(n) ? null : (
+                <Text color={faded ? MUTED : lit ? TONES[work?.tone ?? 'orange']?.bright[1] : undefined} bold={n.id === ex.selected} wrap="truncate-end">
+                  {label}
+                </Text>
+              )}
+            </Box>
+            <Box flexGrow={1} />
+            {n.note ? <Text color={MUTED}>{n.note}</Text> : null}
+            {faded ? null : (
+              <Box position="absolute" top={0} left={0} right={0} bottom={0}>
+                <Client key={`z:${n.id}`} module="./zone.tsx" props={{ id: n.id } satisfies ZoneProps} width="100%" height="100%" />
+              </Box>
+            )}
+          </Box>
+        )
+      }
+      const atSel = shownNode ? rows.findIndex(r => r.node.id === shownNode.id) : -1
+      const depth = atSel >= 0 ? (rows[atSel]?.depth ?? 0) + 1 : 1
+      const propRow = (key: string, d: number, child: unknown) => (
+        <Box key={key} height={1} overflow="hidden" flexDirection="row" alignItems="center" gap={1}>
+          {lead(d, `${key}:g`)}
+          {child as never}
+        </Box>
+      )
+      const propLines =
+        detail.length > 0
+          ? [
+              <Box key="pr:head" position="relative" height={1} overflow="hidden" flexDirection="row" alignItems="center" gap={1} hover={{ backgroundColor: '#232529' }}>
+                {lead(depth, 'pr:head:g')}
+                {icon16(UI_SVG[propsOpen ? 'ui:chevron-down' : 'ui:chevron-right'], propsOpen ? 'collapse' : 'expand', { t: propsOpen ? '⌄' : '›', c: MUTED }, 'pr:chev')}
+                {icon16(UI_SVG['tenant settings'], 'Properties', { t: '⚙', c: MUTED }, 'pr:icon')}
+                <Text color={MUTED}>Properties</Text>
+                <Box position="absolute" top={0} left={0} right={0} bottom={0}>
+                  <Client key={`z:${PROPS}`} module="./zone.tsx" props={{ id: PROPS } satisfies ZoneProps} width="100%" height="100%" />
+                </Box>
+              </Box>,
+              ...(propsOpen
+                ? [
+                    ...details.map((d, i) =>
+                      propRow(
+                        `pr:p:${i}`,
+                        depth + 1,
+                        <Box flexDirection="row" gap={1} flexGrow={1} flexShrink={1}>
+                          <Box width={12} flexShrink={0}>
+                            <Text color={MUTED}>{d.key}</Text>
+                          </Box>
+                          <Box flexShrink={1}>
+                            <Text wrap="truncate-end">{d.value}</Text>
+                          </Box>
+                        </Box>,
+                      ),
+                    ),
+                    ...(actions.length ? [propRow('pr:actions', depth + 1, actionRow)] : []),
+                  ]
+                : []),
+            ]
+          : []
+      const headRows = 4 + (empty ? 1 : 0)
+      const lines = atSel >= 0 ? rows.flatMap((r, i) => (i === atSel ? [nativeRow(r), ...propLines] : [nativeRow(r)])) : rows.map(nativeRow)
+      const offset = e.props.scroll?.offset ?? 0
+      const first = Math.max(0, offset - headRows - body)
+      const last = Math.min(lines.length, offset - headRows + body * 2)
+      return (
+        <Box flexDirection="column">
+          <Box key="desk-head" height={1} flexDirection="row" alignItems="center">
+            <Box flexGrow={1} flexShrink={1} flexDirection="row" alignItems="center" gap={1}>
+              <Text color={TITLE_COLOR}>{titleGlyph(tier)}</Text>
+              <Text bold wrap="truncate-end">{headName}</Text>
+              {ex.status ? <Text color={MUTED} wrap="truncate-end">{ex.status}</Text> : null}
+            </Box>
+            {toggles}
+          </Box>
+          <Box height={3} flexDirection="row" alignItems="center" gap={1} overflow="hidden">
+            <Box flexGrow={1} flexShrink={1} width="100%">
+              {search(false)}
+            </Box>
+            {ex.query ? <Button key="clearq" plain dimColor label="×" onPress={() => quiet(patchView($, () => ({ query: '' })))} /> : null}
+          </Box>
+          {empty ? (
+            <Box height={1}>
+              <Text color={MUTED}>{empty}</Text>
+            </Box>
+          ) : null}
+          {onboard ?? (
+            <Box key="tree" flexDirection="column">
+              {first > 0 ? <Box key="above" height={first} /> : null}
+              {lines.slice(first, Math.max(first, last))}
+              {last < lines.length ? <Box key="below" height={lines.length - Math.max(first, last)} /> : null}
+            </Box>
+          )}
+        </Box>
+      )
+    }
     return (
       <Box flexDirection="column" minHeight={Math.max(1, e.props.scroll?.bodyRows ?? 1)}>
-        <Box flexDirection="row">
-          <Box flexGrow={1} flexShrink={1}>
-            <Client key="head" module="./rows.tsx" props={{ rows: [head], active: '', activeBg: '', hoverBg: '', tones: TONES, spinner } satisfies RowsProps} />
-          </Box>
-          <Box flexDirection="row" gap={2}>
-            {rootNode && <Button key="up" plain dimColor label={icon('\u{f005d}', '↑')} onPress={() => quiet(goUp($))} />}
-            {rootNode && <Button key="home" plain dimColor label={icon('\u{f02dc}', '⌂')} onPress={() => quiet(goHome($))} />}
-            <Button key="refresh" plain dimColor label={icon('\u{f0450}', '↻')} onPress={() => quiet(refresh($))} />
-            <Button key="collapse" plain dimColor label={icon('\u{eac5}', '⊟')} onPress={() => quiet(patchView($, () => ({ expanded: [] })))} />
-            {sel && <Button key="clear" plain label={icon('\u{f0156}', '✕')} onPress={() => quiet(patchView($, () => ({ selected: '', detail: [] })))} />}
-            <Text> </Text>
-          </Box>
-        </Box>
-        <Box flexDirection="row">
-          <Box flexGrow={1}>
-            {work && !ex.query ? (
-              <Client key="working" module="./rows.tsx" props={{ rows: [{ id: '', left: [{ t: 'Claude is working in Databricks...', sh: work.tone }], right: [] }], active: '', activeBg: '', hoverBg: '', tones: TONES, spinner } satisfies RowsProps} />
+        <Client key="head" module="./rows.tsx" props={{ rows: [head], active: '', activeBg: '', hoverBg: '', tones: TONES } satisfies RowsProps} />
+        <Box flexDirection="row" alignItems="center" marginTop={1} marginBottom={1} gap={1}>
+          <Box flexGrow={1} flexShrink={1} width="100%">
+            {working && !ex.query ? (
+              <Client key="working" module="./rows.tsx" props={{ rows: [{ id: '', left: [{ t: '', spin: true }, { t: ' ' }, { t: tier === 'plain' ? '*' : '\u{ec82}', claude: true }, { t: ' Claude is working in Databricks...', sh: 'orange' }], right: [] }], active: '', activeBg: '', hoverBg: '', tones: TONES } satisfies RowsProps} />
             ) : (
-            <Input
-              key="q"
-              label="/ "
-              placeholder="search"
-              submitLabel="jump"
-              autoFocus
-              value={ex.query}
-              onInput={(v: string) => quiet(patchView($, () => ({ query: v })))}
-              onSubmit={(v: string) => quiet(patch($, cur => jumpTo(cur, v)))}
-            />
+              search(true)
             )}
           </Box>
-          {ex.query ? <Button key="clearq" plain dimColor label={tier === 'plain' ? '×' : '\u{f0156}'} onPress={() => quiet(patchView($, () => ({ query: '' })))} /> : null}
+          {ex.query ? <Button key="clearq" plain dimColor label={icon('\u{f0156}', '×')} onPress={() => quiet(patchView($, () => ({ query: '' })))} /> : null}
+          {toggles}
         </Box>
-        {ex.onboard && (
-          <Box flexDirection="column" marginTop={1}>
-            {onboardBlocks(ex.onboard).map((block, b) => (
-              <Box key={`block-${b}`} flexDirection="column" marginTop={b > 0 ? 1 : 0}>
-                {block.map((line, i) =>
-                  'title' in line ? (
-                    <Text key={`line-${i}`} wrap="wrap">
-                      <Text color={TITLE_COLOR}>{`${icon(line.icon[0], line.icon[1])} `}</Text>
-                      <Text bold>{line.title}</Text>
-                    </Text>
-                  ) : 'cmd' in line ? (
-                    <Box key={`line-${i}`} marginLeft={2}>
-                      <Client
-                        key={`onboard-${b}-${i}`}
-                        module="./rows.tsx"
-                        props={{ rows: [{ id: line.cmd, left: [...(line.label ? [{ t: line.label }] : []), { t: line.cmd, c: ACCENT }], right: [] }], active: '', activeBg: '', hoverBg: '#2d2f33', tones: TONES, spinner } satisfies RowsProps}
-                      />
-                    </Box>
-                  ) : (
-                    <Box key={`line-${i}`} marginLeft={2}>
-                      <Text wrap="wrap" dimColor={line.dim}>
-                        {line.text}
-                      </Text>
-                    </Box>
-                  ),
-                )}
-              </Box>
-            ))}
-          </Box>
-        )}
-        {!ex.onboard && ex.nodes.length === 0 && <Text dimColor>{ex.target ? 'nothing loaded yet' : HINT}</Text>}
-        {!ex.onboard && <Client key="rows" module="./rows.tsx" props={{ rows: specs, active: ex.cursor, activeBg: '#3e4451', hoverBg: '#2d2f33', tones: TONES, spinner, ...(bar ? { bar } : {}) } satisfies RowsProps} />}
-        {!ex.onboard && ex.detail.length > 0 && (
-          <Box flexDirection="column" marginTop={1}>
-            {ex.detail.slice(0, DETAIL_ROWS).map((l, i) => (
-              <Text key={String(i)} dimColor={i > 0} bold={i === 0} wrap="truncate-end">
-                {l.replace(/\s+/g, ' ')}
-              </Text>
-            ))}
-            {sel && (
-              <Box flexDirection="row" gap={2}>
-                {webUrl(ex, sel) && <Button key="web" plain label={`${icon('\u{f059f}', '◎')} open in Databricks`} onPress={() => quiet(openWeb($, ex, sel))} />}
-              </Box>
-            )}
-          </Box>
-        )}
+        {onboard}
+        {empty ? <Text color={MUTED}>{empty}</Text> : null}
+        {!ex.onboard && <Client key="rows" module="./rows.tsx" props={{ rows: specs, active: ex.cursor, activeBg: '#3e4451', hoverBg: '#2d2f33', tones: TONES, ...(bar ? { bar } : {}) } satisfies RowsProps} />}
         <Box flexGrow={1} />
-        {sel && (
-          <Text dimColor wrap="truncate-start">
-            selected: {sel.path || sel.name}
-          </Text>
+        {shownNode && detail.length > 0 && (
+          <Box key="details" flexDirection="column">
+            {rule('rule-top')}
+            <Box flexDirection="row" alignItems="center" gap={1} marginBottom={1}>
+              <Text color={glyph(shownNode, tier).color}>{glyph(shownNode, tier).char}</Text>
+              <Text bold wrap="truncate-end">{shownNode.name}</Text>
+              <Box flexGrow={1} />
+              <Button key="clear" plain dimColor label={icon('\u{f0156}', '✕')} onPress={() => quiet(patchView($, () => ({ selected: '', detail: [] })))} />
+            </Box>
+            {details.map((d, i) => (
+              <Box key={`p:${i}`} flexDirection="row" gap={1}>
+                <Box width={12} flexShrink={0}>
+                  <Text color={MUTED}>{d.key}</Text>
+                </Box>
+                <Box flexShrink={1}>
+                  <Text wrap="truncate-end">{d.value}</Text>
+                </Box>
+              </Box>
+            ))}
+            {actions.length > 0 && rule('rule-actions')}
+            {actions.length > 0 && actionRow}
+          </Box>
         )}
       </Box>
     )
