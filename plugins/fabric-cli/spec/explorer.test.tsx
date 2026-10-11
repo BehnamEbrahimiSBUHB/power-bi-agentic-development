@@ -48,7 +48,7 @@ function world(on: any, env: Record<string, string>, ran: Ran) {
   })
   on('ui.close', (_$: any, e: any) => {
     closes.push(e)
-    return {}
+    return { value: undefined }
   })
   on('ui.toast', (_$: any, e: any) => {
     toasts.push(String(e?.text ?? e))
