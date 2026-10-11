@@ -6,7 +6,7 @@ import { glyph, type Tier } from './icons'
 import { FABRIC_SVG } from './svg-data'
 import type { RowSpec, RowsProps, Seg } from './rows'
 import { ancestors, EMPTY, empty, emptyMark, isLoaded, merge, visible } from './tree'
-import { inOneLake, modelOf, parseChildren, parseOneLake, parseWorkspaces, PLACEHOLDER } from './fabric'
+import { inOneLake, modelOf, parseChildren, parseOneLake, parseWorkspaces, PLACEHOLDER, typeLabel } from './fabric'
 import { FAB_TONE, type FabKind, fabCalls, fabGuids, fabKind, fabPositionals, fabWorkspaces, type Invocation, invocations, join, modelFromConnection, posix, queryOf, targetLabel, tokenize, useDrives } from './parse'
 import { fabTouched } from './touch'
 import { COPY, REFRESH, runFailure, setupOf, setupRows, spawnFailure } from './setup'
@@ -208,7 +208,7 @@ function titleGlyph(tier: Tier): string {
 }
 
 function titleFor(target: Target | null): string {
-  return `${titleGlyph(tierFor('terminal'))} ${target ? targetLabel(target) : TITLE}`
+  return target ? tenantName || targetLabel(target) : TITLE
 }
 
 async function get($: EngineInterface): Promise<Explorer> {
@@ -497,6 +497,10 @@ function quiet(p: Promise<unknown>): void {
 
 const domainOf = new Map<string, string>()
 const domainName = new Map<string, string>()
+const capacityOf = new Map<string, string>()
+const capacityName = new Map<string, string>()
+let tenantName = ''
+let tenantAsked = false
 
 function jsonOf<T>(text: string): T | null {
   try {
@@ -506,45 +510,98 @@ function jsonOf<T>(text: string): T | null {
   }
 }
 
-async function loadDomains($: EngineInterface): Promise<void> {
+async function loadDomains($: EngineInterface, withCapacity = false): Promise<void> {
   const names = jsonOf<{ result?: { data?: { name?: string; id?: string }[] } }>(await fabRaw($, ['ls', '/.domains', '-l', '--output_format', 'json']).catch(() => ''))
   domainName.clear()
   for (const d of names?.result?.data ?? []) if (d.id && d.name) domainName.set(d.id.toLowerCase(), d.name.replace(/\.Domain$/i, ''))
+  const caps = withCapacity ? jsonOf<{ result?: { data?: { name?: string; id?: string }[] } }>(await fabRaw($, ['ls', '/.capacities', '-l', '--output_format', 'json']).catch(() => '')) : null
+  capacityName.clear()
+  for (const c of caps?.result?.data ?? []) if (c.id && c.name) capacityName.set(c.id.toLowerCase(), c.name.replace(/\.Capacity$/i, ''))
   const found = new Map<string, string>()
+  const onCapacity = new Map<string, string>()
   let token = ''
-  for (let page = 0; domainName.size > 0 && page < 50; page++) {
-    const body = jsonOf<{ status_code?: number; text?: { value?: { id?: string; domainId?: string }[]; continuationToken?: string } }>(
+  for (let page = 0; (domainName.size > 0 || withCapacity) && page < 50; page++) {
+    const body = jsonOf<{ status_code?: number; text?: { value?: { id?: string; domainId?: string; capacityId?: string }[]; continuationToken?: string } }>(
       await fabRaw($, ['api', token ? `workspaces?continuationToken=${encodeURIComponent(token)}` : 'workspaces']).catch(() => ''),
     )
     if (!body || (body.status_code && body.status_code >= 400)) break
-    for (const w of body.text?.value ?? []) if (w.id && w.domainId && domainName.has(w.domainId.toLowerCase())) found.set(w.id.toLowerCase(), w.domainId.toLowerCase())
+    for (const w of body.text?.value ?? []) {
+      if (!w.id) continue
+      if (w.domainId && domainName.has(w.domainId.toLowerCase())) found.set(w.id.toLowerCase(), w.domainId.toLowerCase())
+      if (w.capacityId) onCapacity.set(w.id.toLowerCase(), w.capacityId.toLowerCase())
+    }
     token = body.text?.continuationToken ?? ''
     if (!token) break
   }
   domainOf.clear()
   for (const [w, d] of found) domainOf.set(w, d)
+  capacityOf.clear()
+  for (const [w, c] of onCapacity) capacityOf.set(w, c)
 }
 
-function grouped(nodes: TreeNode[], on: boolean): TreeNode[] {
-  const flat = nodes.filter(n => n.kind !== 'domain').map(n => (n.kind === 'workspace' && n.parent !== '' ? { ...n, parent: '' } : n))
-  if (!on || domainOf.size === 0) return flat
-  const keyOf = (n: TreeNode) => domainOf.get(n.sig.toLowerCase()) ?? 'none'
+async function loadTenant($: EngineInterface): Promise<void> {
+  if (tenantName) return
+  const status = await fabRaw($, ['auth', 'status']).catch(() => '')
+  const id = status.match(/Tenant ID:\s*([0-9a-f-]{36})/i)?.[1]?.toLowerCase()
+  if (!id) return
+  const body = jsonOf<{ text?: { value?: { tenantId?: string; displayName?: string }[] } }>(
+    await fabRaw($, ['api', '-A', 'azure', 'tenants?api-version=2022-12-01']).catch(() => ''),
+  )
+  tenantName = body?.text?.value?.find(x => x.tenantId?.toLowerCase() === id)?.displayName ?? ''
+}
+
+const GROUP_KINDS = new Set(['domain', 'capacity'])
+
+function plural(n: number, word: string): string {
+  return `${n} ${word}${n === 1 ? '' : 's'}`
+}
+
+function grouped(nodes: TreeNode[], on: boolean, byCapacity = false): TreeNode[] {
+  const flat = nodes.filter(n => !GROUP_KINDS.has(n.kind)).map(n => (n.kind === 'workspace' && n.parent !== '' ? { ...n, parent: '' } : n))
+  const spaces = flat.filter(n => n.kind === 'workspace')
+  const domainKey = (n: TreeNode) => (on && domainOf.size > 0 ? (domainOf.get(n.sig.toLowerCase()) ?? 'none') : '')
+  const capacityKey = (n: TreeNode) => (byCapacity ? (capacityOf.get(n.sig.toLowerCase()) ?? 'none') : '')
+  const useDomains = spaces.some(n => domainKey(n) && domainKey(n) !== 'none')
+  if (!useDomains && !byCapacity) return flat
+  const domainLabel = (k: string) => (k === 'none' ? 'No domain' : (domainName.get(k) ?? `Domain ${k.slice(0, 8)}`))
+  const capacityLabel = (k: string) => (k === 'none' ? 'No capacity' : (capacityName.get(k) ?? `Capacity ${k.slice(0, 8)}`))
+  const last = (a: string, b: string, none: boolean[]) => (none[0] ? 1 : none[1] ? -1 : a.localeCompare(b))
+  const groups = new Map<string, TreeNode>()
   const counts = new Map<string, number>()
-  for (const n of flat) if (n.kind === 'workspace') counts.set(keyOf(n), (counts.get(keyOf(n)) ?? 0) + 1)
-  if (![...counts.keys()].some(k => k !== 'none')) return flat
-  const label = (k: string) => (k === 'none' ? 'No domain' : (domainName.get(k) ?? `Domain ${k.slice(0, 8)}`))
-  const order = [...counts.keys()].sort((a, b) => (a === 'none' ? 1 : b === 'none' ? -1 : label(a).localeCompare(label(b))))
-  const domains = order.map(k => {
-    const count = counts.get(k) ?? 0
-    return { id: `D:${k}`, parent: '', kind: 'domain', name: label(k), path: '', hidden: false, sig: k, note: `${count} workspace${count === 1 ? '' : 's'}` }
-  })
-  return [...domains, ...flat.map(n => (n.kind === 'workspace' ? { ...n, parent: `D:${keyOf(n)}` } : n))]
+  const parentOf = (n: TreeNode): string => {
+    let parent = ''
+    if (useDomains) {
+      const d = domainKey(n)
+      parent = `D:${d}`
+      if (!groups.has(parent)) groups.set(parent, { id: parent, parent: '', kind: 'domain', name: domainLabel(d), path: '', hidden: false, sig: d, note: '' })
+    }
+    if (byCapacity) {
+      const c = capacityKey(n)
+      const id = `${parent ? parent + '|' : ''}C:${c}`
+      if (!groups.has(id)) groups.set(id, { id, parent, kind: 'capacity', name: capacityLabel(c), path: '', hidden: false, sig: c, note: '' })
+      parent = id
+    }
+    for (let g: string | undefined = parent; g; g = groups.get(g)?.parent) counts.set(g, (counts.get(g) ?? 0) + 1)
+    return parent
+  }
+  const placed = flat.map(n => (n.kind === 'workspace' ? { ...n, parent: parentOf(n) } : n))
+  const sorted = [...groups.values()]
+    .map(g => ({ ...g, note: plural(counts.get(g.id) ?? 0, 'workspace') }))
+    .sort((a, b) => last(a.name, b.name, [a.sig === 'none', b.sig === 'none']))
+  return [...sorted, ...placed]
 }
 
 async function toggleDomains($: EngineInterface): Promise<void> {
   const on = (await get($)).byDomain === false
-  if (on && domainOf.size === 0) await loadDomains($)
-  await patch($, cur => ({ byDomain: on, nodes: grouped(cur.nodes, on), root: cur.root.startsWith('D:') ? '' : cur.root }))
+  if (on && domainOf.size === 0) await loadDomains($, (await get($)).byCapacity === true)
+  await patch($, cur => ({ byDomain: on, nodes: grouped(cur.nodes, on, cur.byCapacity === true), root: /^[DC]:/.test(cur.root) ? '' : cur.root }))
+}
+
+async function toggleCapacity($: EngineInterface): Promise<void> {
+  const ex = await get($)
+  const on = ex.byCapacity !== true
+  if (on && capacityOf.size === 0) await loadDomains($, true)
+  await patch($, cur => ({ byCapacity: on, nodes: grouped(cur.nodes, cur.byDomain !== false, on), root: /^[DC]:/.test(cur.root) ? '' : cur.root }))
 }
 
 async function relistRoot($: EngineInterface): Promise<void> {
@@ -552,7 +609,7 @@ async function relistRoot($: EngineInterface): Promise<void> {
   if (!target) return
   try {
     const kids = parseWorkspaces(await fabLs($))
-    await patch($, cur => (sameTarget(cur.target, target) ? { nodes: grouped(merge(grouped(cur.nodes, false), '', kids), cur.byDomain !== false), setup: null } : {}))
+    await patch($, cur => (sameTarget(cur.target, target) ? { nodes: grouped(merge(grouped(cur.nodes, false), '', kids), cur.byDomain !== false, cur.byCapacity === true), setup: null } : {}))
   } catch (err) {
     statusOwner = ''
     const setup = setupOf(err)
@@ -566,9 +623,11 @@ async function doRefresh($: EngineInterface): Promise<void> {
   await patchView($, () => ({ status: 'loading' }))
   treeGen++
   try {
-    const byDomain = (await get($)).byDomain !== false
-    const [listing] = await Promise.all([fabLs($), byDomain ? loadDomains($) : Promise.resolve()])
-    const nodes = grouped(parseWorkspaces(listing), byDomain)
+    const view = await get($)
+    const byDomain = view.byDomain !== false
+    const byCapacity = view.byCapacity === true
+    const [listing] = await Promise.all([fabLs($), byDomain || byCapacity ? loadDomains($, byCapacity) : Promise.resolve(), loadTenant($)])
+    const nodes = grouped(parseWorkspaces(listing), byDomain, byCapacity)
     await patch($, cur => (sameTarget(cur.target, target) ? { nodes, expanded: cur.nodes.length ? cur.expanded : [], status: '', setup: null } : {}))
     await expandOpen($)
   } catch (err) {
@@ -689,11 +748,25 @@ async function select($: EngineInterface, n: TreeNode): Promise<void> {
   if (!isLeaf && (await expandFabric($, n))) await expandOpen($, n.id)
   const detail: string[] = [`${n.kind} ${n.name}`, ...(n.path ? [`fab path: ${n.path}`] : n.note ? [n.note] : [])]
   await patchView($, cur => (cur.cursor === n.id ? { detail } : {}))
-  const props = await properties($, n).catch(() => [])
+  const props = await properties($, n).catch((err: unknown) => [`properties unavailable: ${errorText(err)}`])
   if (props.length) await patchView($, cur => (cur.cursor === n.id ? { detail: [...detail, ...props] } : {}))
 }
 
-const PROPERTY_KEYS = ['type', 'id', 'displayName', 'description', 'workspaceId', 'folderId', 'capacityId', 'capacityRegion', 'domainId', 'capacityAssignmentProgress']
+const PROPERTY_LABELS: [string, string][] = [
+  ['type', 'Type'],
+  ['id', 'ID'],
+  ['description', 'Description'],
+  ['folderId', 'Folder ID'],
+  ['capacityId', 'Capacity'],
+  ['capacityRegion', 'Region'],
+  ['domainId', 'Domain'],
+]
+
+function propertyValue(key: string, value: string): string {
+  if (key === 'capacityId') return capacityName.get(value.toLowerCase()) ?? value
+  if (key === 'domainId') return domainName.get(value.toLowerCase()) ?? value
+  return value
+}
 
 function apiPathOf(n: TreeNode): string {
   if (n.kind === 'workspace') return /^[0-9a-f-]{36}$/i.test(n.sig) ? `workspaces/${n.sig}` : ''
@@ -701,12 +774,22 @@ function apiPathOf(n: TreeNode): string {
   return m ? `workspaces/${m[1]}/items/${m[2]}` : ''
 }
 
+async function namesOf($: EngineInterface, list: string, suffix: RegExp, into: Map<string, string>): Promise<void> {
+  if (into.size > 0) return
+  const body = jsonOf<{ result?: { data?: { name?: string; id?: string }[] } }>(await fabRaw($, ['ls', list, '-l', '--output_format', 'json']).catch(() => ''))
+  for (const d of body?.result?.data ?? []) if (d.id && d.name) into.set(d.id.toLowerCase(), d.name.replace(suffix, ''))
+}
+
 async function properties($: EngineInterface, n: TreeNode): Promise<string[]> {
   const path = apiPathOf(n)
   if (!path) return []
   const body = jsonOf<Record<string, unknown>>(await fabRaw($, ['api', path, '-q', 'text']))
   if (!body) return []
-  return PROPERTY_KEYS.filter(k => body[k] !== undefined && body[k] !== null && body[k] !== '').map(k => `${k}: ${String(body[k])}`)
+  await Promise.all([
+    body.capacityId ? namesOf($, '/.capacities', /\.Capacity$/i, capacityName) : Promise.resolve(),
+    body.domainId ? namesOf($, '/.domains', /\.Domain$/i, domainName) : Promise.resolve(),
+  ])
+  return PROPERTY_LABELS.filter(([k]) => body[k] !== undefined && body[k] !== null && body[k] !== '').map(([k, label]) => `${label}: ${propertyValue(k, String(body[k]))}`)
 }
 
 function contextFor(ex: Explorer, n: TreeNode): string {
@@ -1001,6 +1084,10 @@ export const register: Register = (on, options) => {
     if (e.surface === 'terminal' && tier === 'plain' && glyphSetting === 'auto') fellBack = true
     const { Box, Text, Button, Input, Client } = $.ui.resolve(e)
     const ex = await get($)
+    if (ex.target && !tenantName && !tenantAsked) {
+      tenantAsked = true
+      quiet(loadTenant($).then(() => $.ui.invalidate('ui.render')))
+    }
     const now = await $.clock.now()
     const busyTone = (id: string) => {
       const b = ex.busy[id]
@@ -1041,8 +1128,11 @@ export const register: Register = (on, options) => {
     const sel = ex.nodes.find(n => n.id === ex.selected)
     const clip = (s: string, max = width) => (s.length > max ? s.slice(0, max - 1) + '…' : s)
     const spin = (tone: string): Seg => ({ t: ' ', spin: true, b: true, c: TONES[tone]?.bright[1] ?? SHIMMER[1] })
+    const kids = new Map<string, number>()
+    for (const k of ex.nodes) if (k.parent && k.kind !== PLACEHOLDER && k.kind !== EMPTY && !GROUP_KINDS.has(k.kind)) kids.set(k.parent, (kids.get(k.parent) ?? 0) + 1)
+    const noteOf = (r: (typeof rows)[number]) => r.node.note || (r.open && kids.get(r.node.id) ? plural(kids.get(r.node.id) ?? 0, 'item') : '')
     const rowSpec = (r: (typeof rows)[number]): RowSpec => {
-      const n = r.node
+      const n = { ...r.node, note: noteOf(r) }
       const g = glyph(n, tier)
       const arrow = r.leaf ? '  ' : tier === 'plain' ? (r.open ? '▾ ' : '▸ ') : r.open ? '\u{f47c} ' : '\u{f460} '
       const note = n.note ? ` ${n.note}` : ''
@@ -1071,12 +1161,12 @@ export const register: Register = (on, options) => {
         : undefined
     const icon = (nerd: string, fallback: string) => (tier === 'plain' ? fallback : nerd)
     const rootNode = ex.nodes.find(n => n.id === rootOf(ex))
-    const rootName = rootNode ? rootNode.name : ''
+    const headName = rootNode ? rootNode.name : ex.target ? tenantName || targetLabel(ex.target) : TITLE
     const head: RowSpec = {
       id: '',
       left: clean([
         { t: `${titleGlyph(tier)} `, c: TITLE_COLOR },
-        { t: rootName || (ex.target ? targetLabel(ex.target) : TITLE), b: true },
+        { t: headName, b: true },
         ...(ex.status ? [{ t: `  ${ex.status}`, c: '#6e6e7a' }] : []),
         ...(busyTone(HEADER) ? [spin(busyTone(HEADER))] : []),
       ]),
@@ -1085,115 +1175,137 @@ export const register: Register = (on, options) => {
     const spinner = tier === 'plain' ? PLAIN_SPINNER : []
     const table = $.ui.resolve(e)
     const Svg = 'Svg' in table ? table.Svg : undefined
+    const native = e.surface === 'desktop' && Boolean(Svg)
+    const MUTED = '#6e6e7a'
     const icon16 = (source: string | undefined, alt: string, fallback: Seg, key: string) =>
-      Svg && source ? <Svg key={key} source={source} alt={alt} width={16} height={16} /> : <Text key={key} color={fallback.c}>{fallback.t}</Text>
+      native && Svg && source ? <Svg key={key} source={source} alt={alt} width={16} height={16} /> : <Text key={key} color={fallback.c}>{fallback.t}</Text>
+    const rule = (key: string) => <Text key={key} color="#3a3a42" wrap="truncate-end">{'─'.repeat(width)}</Text>
     const nativeRow = (r: (typeof rows)[number]) => {
       const n = r.node
       const g = glyph(n, 'plain')
-      const note = n.note ? ` ${n.note}` : ''
-      const faded = n.hidden || n.kind === 'placeholder' || n.kind === EMPTY
+      const note = noteOf(r)
+      const faded = n.hidden || n.kind === PLACEHOLDER || n.kind === EMPTY
       const label = clip(n.name, Math.max(4, width - r.depth * 2 - 8 - note.length))
-      const pick = () => quiet(press($, n))
+      const busy = busyTone(n.id)
       return (
-        <Box key={`n:${n.id}`} flexDirection="row" alignItems="center" gap={1} backgroundColor={n.id === ex.cursor ? '#3e4451' : undefined} hover={{ backgroundColor: '#2d2f33' }}>
-          <Text>{'  '.repeat(r.depth)}</Text>
-          {r.leaf ? <Text>{' '}</Text> : <Button key={`t:${n.id}`} plain dimColor label={r.open ? '▾' : '▸'} onPress={() => quiet(select($, n))} />}
-          {icon16(FABRIC_SVG[n.kind], n.note || n.kind, { t: g.char, c: g.color }, `i:${n.id}`)}
-          {faded ? <Text dimColor>{label}</Text> : <Button key={`r:${n.id}`} plain label={label} onPress={pick} />}
-          {busyTone(n.id) ? <Text color={TONES[busyTone(n.id)]?.bright[1]}>…</Text> : null}
+        <Box key={`n:${n.id}`} flexDirection="row" alignItems="center" gap={1} backgroundColor={n.id === ex.cursor ? '#2c313c' : undefined} hover={{ backgroundColor: '#26282d' }}>
+          <Box width={r.depth * 2} flexShrink={0} />
+          <Box width={2} flexShrink={0}>
+            {r.leaf ? null : <Button key={`t:${n.id}`} plain dimColor label={r.open ? '⌄' : '›'} onPress={() => quiet(select($, n))} />}
+          </Box>
+          {icon16(FABRIC_SVG[n.kind], typeLabel(n.kind), { t: g.char, c: g.color }, `i:${n.id}`)}
+          {faded ? <Text color={MUTED}>{label}</Text> : <Button key={`r:${n.id}`} plain label={label} onPress={() => quiet(press($, n))} />}
+          {busy ? <Text color={TONES[busy]?.bright[1]}>…</Text> : null}
           <Box flexGrow={1} />
-          {note ? <Text dimColor>{note.trim()}</Text> : null}
+          {note ? <Text color={MUTED}>{note}</Text> : null}
         </Box>
       )
     }
-    const nativeHead = (
-      <Box flexDirection="row" alignItems="center" gap={1}>
-        {icon16(FABRIC_SVG.fabric, 'Microsoft Fabric', { t: titleGlyph(tier), c: TITLE_COLOR }, 'logo')}
-        <Text bold>{rootName || (ex.target ? targetLabel(ex.target) : TITLE)}</Text>
-        {ex.status ? <Text dimColor>{ex.status}</Text> : null}
+    const details = ex.detail.slice(1, DETAIL_ROWS).map(l => {
+      const at = l.indexOf(': ')
+      const key = at > 0 ? l.slice(0, at) : ''
+      return { key: key === 'fab path' ? 'Path' : key, value: (at > 0 ? l.slice(at + 2) : l).replace(/\s+/g, ' ') }
+    })
+    const shownNode = ex.nodes.find(n => n.id === ex.cursor) ?? sel
+    const pathed = shownNode && shownNode.path ? shownNode : undefined
+    const actions = pathed
+      ? [
+          ...(webUrl(ex, pathed) ? [{ key: 'web', svg: 'ui:open', nerd: '\u{f0379}', plain: '↗', label: 'Open in Fabric', run: () => quiet(openWeb($, ex, pathed)) }] : []),
+          ...(modelOf(pathed) ? [{ key: 'open', svg: 'ui:open', nerd: '\u{f0379}', plain: '↗', label: 'Open in te', run: () => quiet(openLocal($, ex, pathed)) }] : []),
+        ]
+      : []
+    const toggles = (
+      <Box flexDirection="row" gap={2}>
+        {ex.target && <Button key="domains" plain dimColor={ex.byDomain === false} label={native ? 'Domains' : `${icon('\u{f0ac}', '◇')} `} onPress={() => quiet(toggleDomains($))} />}
+        <Button key="capacities" plain dimColor={ex.byCapacity !== true} label={native ? 'Capacities' : `${icon('\u{f04c5}', '◔')} `} onPress={() => quiet(toggleCapacity($))} />
+        {rootNode && <Button key="up" plain dimColor label={icon('\u{f005d}', '↑')} onPress={() => quiet(goUp($))} />}
+        {rootNode && <Button key="home" plain dimColor label={icon('\u{f02dc}', '⌂')} onPress={() => quiet(goHome($))} />}
+        <Button key="refresh" plain dimColor label={icon('\u{f0450}', '↻')} onPress={() => quiet(refresh($))} />
+        <Button key="collapse" plain dimColor label={icon('\u{eac5}', '⊟')} onPress={() => quiet(patchView($, () => ({ expanded: [] })))} />
+        <Text> </Text>
       </Box>
     )
-    const native = e.surface === 'desktop' && Boolean(Svg)
-    const [title, ...props] = ex.detail.slice(0, DETAIL_ROWS)
     return (
       <Box flexDirection="column" minHeight={Math.max(1, e.props.scroll?.bodyRows ?? 1)}>
-        <Box flexDirection="row">
-          {domainOf.size > 0 && <Button key="domains" plain dimColor={ex.byDomain === false} label={`${icon('\u{f0ac}', '◇')} `} onPress={() => quiet(toggleDomains($))} />}
+        <Box flexDirection="row" alignItems="center">
           <Box flexGrow={1} flexShrink={1}>
-            {native ? nativeHead : <Client key="head" module="./rows.tsx" props={{ rows: [head], active: '', activeBg: '', hoverBg: '', tones: TONES, spinner } satisfies RowsProps} />}
+            {native ? (
+              <Box flexDirection="row" alignItems="center" gap={1}>
+                {icon16(FABRIC_SVG.fabric, 'Microsoft Fabric', { t: titleGlyph(tier), c: TITLE_COLOR }, 'logo')}
+                <Text bold wrap="truncate-end">{headName}</Text>
+                {ex.status ? <Text color={MUTED}>{ex.status}</Text> : null}
+              </Box>
+            ) : (
+              <Client key="head" module="./rows.tsx" props={{ rows: [head], active: '', activeBg: '', hoverBg: '', tones: TONES, spinner } satisfies RowsProps} />
+            )}
           </Box>
-          <Box flexDirection="row" gap={2}>
-            {rootNode && <Button key="up" plain dimColor label={icon('\u{f005d}', '↑')} onPress={() => quiet(goUp($))} />}
-            {rootNode && <Button key="home" plain dimColor label={icon('\u{f02dc}', '⌂')} onPress={() => quiet(goHome($))} />}
-            <Button key="refresh" plain dimColor label={icon('\u{f0450}', '↻')} onPress={() => quiet(refresh($))} />
-            <Button key="collapse" plain dimColor label={icon('\u{eac5}', '⊟')} onPress={() => quiet(patchView($, () => ({ expanded: [] })))} />
-            {sel && <Button key="clear" plain label={icon('\u{f0156}', '✕')} onPress={() => quiet(patchView($, () => ({ selected: '', detail: [] })))} />}
-            <Text> </Text>
-          </Box>
+          {toggles}
         </Box>
         <Box flexDirection="row">
           <Box flexGrow={1}>
             {work && !ex.query ? (
               <Client key="working" module="./rows.tsx" props={{ rows: [{ id: '', left: [{ t: 'Claude is working in Fabric...', sh: work.tone }], right: [] }], active: '', activeBg: '', hoverBg: '', tones: TONES, spinner } satisfies RowsProps} />
             ) : (
-            <Input
-              key="q"
-              label="/ "
-              placeholder="search"
-              submitLabel="jump"
-              autoFocus
-              value={ex.query}
-              onInput={(v: string) => quiet(patchView($, () => ({ query: v })))}
-              onSubmit={(v: string) => quiet(patch($, cur => jumpTo(cur, v)))}
-            />
+              <Input
+                key="q"
+                placeholder="Filter, or Enter to jump"
+                autoFocus
+                value={ex.query}
+                onInput={(v: string) => quiet(patchView($, () => ({ query: v })))}
+                onSubmit={(v: string) => quiet(patch($, cur => jumpTo(cur, v)))}
+              />
             )}
           </Box>
           {ex.query ? <Button key="clearq" plain dimColor label={tier === 'plain' ? '×' : '\u{f0156}'} onPress={() => quiet(patchView($, () => ({ query: '' })))} /> : null}
         </Box>
-        {!ex.setup && ex.nodes.length === 0 && <Text dimColor>{ex.target ? 'nothing loaded yet' : HINT}</Text>}
+        {!ex.setup && ex.nodes.length === 0 && <Text color={MUTED}>{ex.target ? 'nothing loaded yet' : HINT}</Text>}
         {ex.setup ? (
           <Client key="setup" module="./rows.tsx" props={{ rows: setupRows(ex.setup, tier, width), active: '', activeBg: '', hoverBg: '#2d2f33', tones: TONES, spinner } satisfies RowsProps} />
         ) : native ? (
           <Box key="rows" flexDirection="column">
             {pinned.map(nativeRow)}
-            {pinned.length > 0 && <Text dimColor>  ⋮</Text>}
+            {pinned.length > 0 && <Text color={MUTED}>  ⋮</Text>}
             {shown.map(nativeRow)}
           </Box>
         ) : (
           <Client key="rows" module="./rows.tsx" props={{ rows: specs, active: ex.cursor, activeBg: '#3e4451', hoverBg: '#2d2f33', tones: TONES, spinner, ...(bar ? { bar } : {}) } satisfies RowsProps} />
         )}
         <Box flexGrow={1} />
-        {title !== undefined && (
-          <Box flexDirection="column">
-            <Text dimColor wrap="truncate-end">{'─'.repeat(width)}</Text>
+        {shownNode && ex.detail.length > 0 && (
+          <Box key="details" flexDirection="column">
+            {rule('rule-top')}
             <Box flexDirection="row" alignItems="center" gap={1}>
-              {sel && icon16(FABRIC_SVG[sel.kind], sel.note || sel.kind, { t: glyph(sel, tier).char, c: glyph(sel, tier).color }, 'sel')}
-              <Text bold wrap="truncate-end">{title.replace(/\s+/g, ' ')}</Text>
+              {icon16(FABRIC_SVG[shownNode.kind], typeLabel(shownNode.kind), { t: glyph(shownNode, tier).char, c: glyph(shownNode, tier).color }, 'sel')}
+              <Text bold wrap="truncate-end">{shownNode.name}</Text>
+              <Box flexGrow={1} />
+              {sel && <Button key="clear" plain dimColor label={icon('\u{f0156}', '✕')} onPress={() => quiet(patchView($, () => ({ selected: '', detail: [] })))} />}
             </Box>
-            {props.map((l, i) => {
-              const at = l.indexOf(': ')
-              return at > 0 ? (
-                <Box key={String(i)} flexDirection="row">
-                  <Text dimColor>{l.slice(0, at).padEnd(14)}</Text>
-                  <Text wrap="truncate-end">{l.slice(at + 2).replace(/\s+/g, ' ')}</Text>
+            {details.map((d, i) => (
+              <Box key={`p:${i}`} flexDirection="row" gap={1}>
+                <Box width={12} flexShrink={0}>
+                  <Text color={MUTED}>{d.key}</Text>
                 </Box>
-              ) : (
-                <Text key={String(i)} dimColor wrap="truncate-end">{l.replace(/\s+/g, ' ')}</Text>
-              )
-            })}
-            {sel && (
-              <Box flexDirection="row" gap={2}>
-                {modelOf(sel) && <Button key="open" plain label={`${icon('\u{f0379}', '↗')} open in te`} onPress={() => quiet(openLocal($, ex, sel))} />}
-                {webUrl(ex, sel) && <Button key="web" plain label={`${icon('\u{f059f}', '◎')} open in Fabric`} onPress={() => quiet(openWeb($, ex, sel))} />}
-                <Button key="copy" plain label={`${icon('\u{f018f}', '⧉')} copy fab path`} onPress={press => quiet(copyOf($, sel.path || sel.name, press.surface))} />
+                <Box flexShrink={1}>
+                  <Text wrap="truncate-end">{d.value}</Text>
+                </Box>
               </Box>
+            ))}
+            {pathed && rule('rule-actions')}
+            {pathed && (
+            <Box flexDirection="row" alignItems="center" gap={2}>
+              {actions.map(a => (
+                <Box key={`a:${a.key}`} flexDirection="row" alignItems="center" gap={1}>
+                  {native ? icon16(FABRIC_SVG[a.svg], a.label, { t: '', c: MUTED }, `ai:${a.key}`) : null}
+                  <Button key={a.key} plain label={native ? a.label : `${icon(a.nerd, a.plain)} ${a.label}`} onPress={a.run} />
+                </Box>
+              ))}
+              <Box key="a:copy" flexDirection="row" alignItems="center" gap={1}>
+                {native ? icon16(FABRIC_SVG['ui:copy'], 'Copy', { t: '', c: MUTED }, 'ai:copy') : null}
+                <Button key="copy" plain label={native ? 'Copy path' : `${icon('\u{f018f}', '⧉')} Copy path`} onPress={p => quiet(copyOf($, pathed.path, p.surface))} />
+              </Box>
+            </Box>
             )}
           </Box>
-        )}
-        {sel && (
-          <Text dimColor wrap="truncate-start">
-            selected: {sel.path || sel.name}
-          </Text>
         )}
       </Box>
     )

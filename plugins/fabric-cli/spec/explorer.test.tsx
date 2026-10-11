@@ -148,8 +148,11 @@ test('macOS app: rows draw natively with the Fabric icons, scroll, and the selec
   expect(model?.props.source).toContain('<svg')
   const text = JSON.stringify(drawn)
   expect(text).toContain('─'.repeat(20))
-  expect(text).toContain('workspaceId')
-  expect(text).toContain(UUID(1))
+  expect(text).toContain('"ID"')
+  expect(text).toContain(UUID(900))
+  expect(text).toContain('Open in Fabric')
+  expect(all(drawn, 'Svg').some((s: any) => s.props.alt === 'Copy')).toBe(true)
+  expect(text).not.toContain('selected:')
   await ui.press({ key: 'copy' })
   await clock.settle()
   expect(copied).toEqual(['WS00.Workspace/Sales.SemanticModel'])
@@ -629,8 +632,8 @@ test('a slow earlier selection does not overwrite the details of the latest one'
   await clock.settle()
   runHook = null
   const drawn = JSON.stringify(await ui.drawn())
-  expect(drawn).toContain('workspace WS01')
-  expect(drawn).not.toContain('workspace WS00')
+  expect(drawn).toContain('WS01.Workspace')
+  expect(drawn).not.toContain('WS00.Workspace')
   await ui.unmount()
 })
 
@@ -1223,4 +1226,31 @@ test('fab failures classify as missing, signed out, unreachable or other', { tim
   expect(run(1, '', 'ConnectionResetError: [Errno 104] Connection reset by peer')).toBe('unreachable')
   expect(run(1, fabJson('Access is forbidden. You do not have permission to access this resource', 'Forbidden'))).toBe('')
   expect(runFailure({ exitCode: 1, stdout: fabJson('Access is forbidden', 'Forbidden'), stderr: '' }, 'fab ls failed').message).toBe('Access is forbidden')
+})
+
+test('capacities group the workspaces, and an open workspace counts its items on the right', { timeoutMs: 20_000 }, async ($, on) => {
+  const ran: Ran = []
+  const { clock } = world(on, { HOME: '/home/k' }, ran)
+  runHook = argv => {
+    const ok = (stdout: string) => ({ value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
+    if (argv[1] === 'ls' && argv[2] === '/.capacities') return ok(JSON.stringify({ result: { data: [{ name: 'prod.Capacity', id: UUID(500) }] } }))
+    if (argv[1] === 'api' && argv[2] === 'workspaces') return ok(JSON.stringify({ status_code: 200, text: { value: WORKSPACES.map((w, i) => ({ id: w.id, displayName: w.name, ...(i === 0 ? { capacityId: UUID(500) } : {}) })) } }))
+    return null
+  }
+  const ui = await open($, clock, 'terminal')
+  await ui.press({ key: 'capacities' })
+  await clock.settle()
+  let rows = (await rowsOf(ui)).rows
+  const prod = rows.find((r: any) => r.id === `C:${UUID(500)}`)
+  expect(JSON.stringify(prod)).toContain('prod')
+  expect(JSON.stringify(prod)).toContain('1 workspace')
+  expect(JSON.stringify(rows.find((r: any) => r.id === 'C:none'))).toContain('60 workspaces')
+  await ui.post({ press: `C:${UUID(500)}` }, { in: 'rows' })
+  await clock.settle()
+  await ui.post({ press: 'W:WS00' }, { in: 'rows' })
+  await clock.settle()
+  rows = (await rowsOf(ui)).rows
+  expect(JSON.stringify(rows.find((r: any) => r.id === 'W:WS00'))).toContain('4 items')
+  runHook = null
+  await ui.unmount()
 })
