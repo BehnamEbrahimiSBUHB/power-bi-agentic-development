@@ -7,6 +7,7 @@ import { FABRIC_SVG } from './svg-data'
 import { SETTING_DOCS } from './setting-data'
 import type { RowSpec, RowsProps, Seg } from './rows'
 import type { ZoneProps } from './zone'
+import type { BarProps } from './bar'
 import { ancestors, EMPTY, empty, emptyMark, isLoaded, merge, type Row, visible } from './tree'
 import { inOneLake, modelOf, parseChildren, parseOneLake, parseWorkspaces, PLACEHOLDER, typeLabel } from './fabric'
 import { FAB_TONE, type FabKind, fabCalls, fabGuids, fabKind, fabPositionals, fabWorkspaces, type Invocation, invocations, join, modelFromConnection, posix, queryOf, targetLabel, tokenize, useDrives } from './parse'
@@ -534,8 +535,7 @@ const settingOf = new Map<string, Setting>()
 const TENANT = '#tenant'
 const TOGGLE = 'toggle:'
 const DETAILS_REGION = 'region:details'
-const SLACK = 2
-const desk = { active: false, from: null as number | null, lastFrom: 0, treeMax: 0, detailFrom: 0, detailMax: 0, page: 10, region: 'tree' as 'tree' | 'details', pinAsked: false }
+const desk = { active: false, from: null as number | null, lastFrom: 0, treeMax: 0, treeRoom: 0, detailFrom: 0, detailMax: 0, detailRoom: 0, page: 10, region: 'tree' as 'tree' | 'details' }
 
 function clamp(n: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, n))
@@ -980,9 +980,12 @@ async function select($: EngineInterface, n: TreeNode): Promise<void> {
   })
   if (!isLeaf && (await expandFabric($, n, true))) await expandOpen($, n.id)
   const detail: string[] = [`${n.kind} ${n.name}`, ...(n.path ? [`fab path: ${n.path}`] : n.note ? [n.note] : [])]
-  await patchView($, cur => (cur.cursor === n.id ? { detail } : {}))
-  const props = await properties($, n).catch((err: unknown) => [`properties unavailable: ${errorText(err)}`])
-  if (props.length) await patchView($, cur => (cur.cursor === n.id ? { detail: [...detail, ...props] } : {}))
+  const key = apiPathOf(n)
+  const cached = key ? await cachedProps($, key) : undefined
+  await patchView($, cur => (cur.cursor === n.id ? { detail: [...detail, ...(cached ?? [])] } : {}))
+  const props = await properties($, n).catch((err: unknown) => (cached ? cached : [`properties unavailable: ${errorText(err)}`]))
+  if (key && props.length && !props[0]?.startsWith('properties unavailable')) void rememberProps($, key, props)
+  if (props.length && props.join('\n') !== (cached ?? []).join('\n')) await patchView($, cur => (cur.cursor === n.id ? { detail: [...detail, ...props] } : {}))
 }
 
 const PROPERTY_LABELS: [string, string][] = [
@@ -1011,6 +1014,30 @@ async function namesOf($: EngineInterface, list: string, suffix: RegExp, into: M
   if (into.size > 0) return
   const body = jsonOf<{ result?: { data?: { name?: string; id?: string }[] } }>(await fabRaw($, ['ls', list, '-l', '--output_format', 'json']).catch(() => ''))
   for (const d of body?.result?.data ?? []) if (d.id && d.name) into.set(d.id.toLowerCase(), d.name.replace(suffix, ''))
+}
+
+const PROPS_KEY = 'properties'
+const PROPS_MAX = 500
+let propCache: Map<string, string[]> | null = null
+
+async function loadProps($: EngineInterface): Promise<Map<string, string[]>> {
+  if (propCache) return propCache
+  const saved = await $.store.get(PROPS_KEY).catch(() => undefined)
+  const entries = Array.isArray(saved) ? saved.filter((x): x is [string, string[]] => Array.isArray(x) && typeof x[0] === 'string' && Array.isArray(x[1])) : []
+  propCache = new Map(entries)
+  return propCache
+}
+
+async function cachedProps($: EngineInterface, key: string): Promise<string[] | undefined> {
+  return (await loadProps($)).get(key)
+}
+
+async function rememberProps($: EngineInterface, key: string, props: string[]): Promise<void> {
+  const cache = await loadProps($)
+  cache.delete(key)
+  cache.set(key, props)
+  while (cache.size > PROPS_MAX) cache.delete(cache.keys().next().value as string)
+  await $.store.set(PROPS_KEY, [...cache.entries()]).catch(() => undefined)
 }
 
 async function properties($: EngineInterface, n: TreeNode): Promise<string[]> {
@@ -1228,10 +1255,20 @@ export const register: Register = (on, options) => {
   })
 
   on('ui.message', async ($, e, next) => {
-    if (e.requestId === PANE && e.element.startsWith('z:') && e.data && typeof e.data === 'object') {
-      const data = e.data as { zone?: unknown; hover?: unknown; ctrl?: unknown; shift?: unknown }
+    if (e.requestId === PANE && (e.element.startsWith('z:') || e.element.startsWith('bar:')) && e.data && typeof e.data === 'object') {
+      const data = e.data as { zone?: unknown; hover?: unknown; bar?: unknown; frac?: unknown; ctrl?: unknown; shift?: unknown }
       if (typeof data.hover === 'string') {
-        desk.region = data.hover === DETAILS_REGION ? 'details' : 'tree'
+        desk.region = data.hover === DETAILS_REGION || data.hover === 'bar:details' ? 'details' : 'tree'
+        return {}
+      }
+      if (typeof data.bar === 'string' && typeof data.frac === 'number') {
+        const details = data.bar === 'bar:details'
+        const total = details ? desk.detailMax + desk.detailRoom : desk.treeMax + desk.treeRoom
+        const at = clamp(Math.round(data.frac * total - (details ? desk.detailRoom : desk.treeRoom) / 2), 0, details ? desk.detailMax : desk.treeMax)
+        if (details) desk.detailFrom = at
+        else desk.from = at
+        desk.region = details ? 'details' : 'tree'
+        $.ui.invalidate('ui.render')
         return {}
       }
       const id = typeof data.zone === 'string' ? data.zone : ''
@@ -1307,7 +1344,7 @@ export const register: Register = (on, options) => {
       if (desk.region === 'details') desk.detailFrom = clamp(desk.detailFrom + step, 0, desk.detailMax)
       else desk.from = clamp((desk.from ?? desk.lastFrom) + step, 0, desk.treeMax)
       $.ui.invalidate('ui.render')
-      return (e.contentRows ?? 0) - (e.bodyRows ?? 0) >= SLACK ? next({ ...e, offset: SLACK }) : {}
+      return {}
     }
     const view = views.get('terminal') ?? views.get('desktop') ?? { from: 0, max: 0 }
     const ex = await get($)
@@ -1607,25 +1644,20 @@ export const register: Register = (on, options) => {
       const treeRoom = Math.max(3, body - headRows - (detailRoom ? detailRoom + 1 : 0))
       desk.treeMax = Math.max(0, rows.length - treeRoom)
       desk.detailMax = Math.max(0, detailLines.length - detailRoom)
+      desk.treeRoom = treeRoom
+      desk.detailRoom = detailRoom
       desk.page = Math.max(1, treeRoom - 1)
       desk.detailFrom = clamp(desk.detailFrom, 0, desk.detailMax)
       const treeFrom = clamp(desk.from ?? from, 0, desk.treeMax)
       desk.lastFrom = treeFrom
-      const offset = e.props.scroll?.offset ?? 0
-      if (offset === SLACK) desk.pinAsked = false
-      else if (!desk.pinAsked) {
-        desk.pinAsked = true
-        quiet($.ui.scroll({ to: { key: 'desk-body' }, in: PANE, block: 'start' }))
-      }
       const bar = (key: string, total: number, start: number, size: number) =>
         total <= size ? null : (
-          <Box key={key} width={1} height={size} position="relative" backgroundColor="#1d1d21" flexShrink={0}>
-            <Box position="absolute" left={0} width={1} top={Math.round((start / total) * size)} height={Math.max(1, Math.round((size * size) / total))} backgroundColor="#4a4a55" />
+          <Box key={`${key}-box`} width={1} height={size} flexShrink={0}>
+            <Client key={key} module="./bar.tsx" props={{ id: key, total, start, size, track: '#1d1d21', thumb: '#4a4a55' } satisfies BarProps} width={1} height={size} />
           </Box>
         )
       return (
-        <Box flexDirection="column" height={body + SLACK * 2} overflow="hidden">
-          <Box height={SLACK} />
+        <Box flexDirection="column" height={body} overflow="hidden">
           <Box key="desk-body" height={1} flexDirection="row" alignItems="center">
             <Box flexGrow={1} flexShrink={1} flexDirection="row" alignItems="center" gap={1}>
               {icon16(FABRIC_SVG.fabric, 'Microsoft Fabric', { t: titleGlyph(tier), c: TITLE_COLOR }, 'logo')}
@@ -1667,7 +1699,7 @@ export const register: Register = (on, options) => {
                 {rows.slice(treeFrom, treeFrom + treeRoom).map(nativeRow)}
               </Box>
             )}
-            {bar('tree-bar', rows.length, treeFrom, treeRoom)}
+            {bar('bar:tree', rows.length, treeFrom, treeRoom)}
           </Box>
           {detailRoom ? rule('rule-top') : null}
           {detailRoom ? (
@@ -1675,10 +1707,9 @@ export const register: Register = (on, options) => {
               <Box flexDirection="column" flexGrow={1} flexShrink={1}>
                 {detailLines.slice(desk.detailFrom, desk.detailFrom + detailRoom)}
               </Box>
-              {bar('detail-bar', detailLines.length, desk.detailFrom, detailRoom)}
+              {bar('bar:details', detailLines.length, desk.detailFrom, detailRoom)}
             </Box>
           ) : null}
-          <Box height={SLACK} />
         </Box>
       )
     }
