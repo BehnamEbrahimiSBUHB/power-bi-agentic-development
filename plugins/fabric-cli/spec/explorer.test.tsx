@@ -1327,7 +1327,7 @@ test('macOS app: a click opens the row at once with a loading spinner, before fa
   void ui.press({ key: 'r:W:WS00' })
   await clock.advance(10)
   const drawn = await ui.drawn()
-  expect(all(drawn, 'Svg').some((s: any) => s.props.alt === 'collapse')).toBe(true)
+  expect(JSON.stringify(await ui.find({ key: 'c:W:WS00' }))).toContain('⌄')
   expect(JSON.stringify(drawn)).toContain('Loading…')
   expect(all(drawn, 'Svg').every((s: any) => s.props.alt.length > 0)).toBe(true)
   slow.release()

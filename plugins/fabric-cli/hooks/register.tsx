@@ -129,9 +129,17 @@ async function started($: EngineInterface, argv: string[]): Promise<void> {
   }
 }
 
-const slots = { busy: 0, queue: [] as (() => void)[] }
+const slots = { busy: 0, urgent: 0, queue: [] as (() => void)[] }
 
-async function limited<T>(fn: () => Promise<T>): Promise<T> {
+async function limited<T>(fn: () => Promise<T>, urgent = false): Promise<T> {
+  if (urgent) {
+    slots.urgent++
+    try {
+      return await fn()
+    } finally {
+      slots.urgent--
+    }
+  }
   if (slots.busy < 4) slots.busy++
   else await new Promise<void>(resolve => slots.queue.push(resolve))
   try {
@@ -424,14 +432,16 @@ function listing(stdout: string, n: TreeNode, nodes: TreeNode[]): { kids: TreeNo
   return inOneLake(n) ? parseOneLake(stdout, n) : { kids: parseChildren(stdout, n, nodes), become: '' }
 }
 
-async function fabLs($: EngineInterface, path?: string): Promise<string> {
+async function fabLs($: EngineInterface, path?: string, urgent = false): Promise<string> {
   const ctx = fabContext
   const where = path ? `/${path.replace(/^\/+/, '')}` : '/'
-  const run = await limited(() =>
-    $.process.run([ctx.bin, 'ls', where, '-l', '--output_format', 'json'], {
-      timeoutMs: 60_000,
-      ...(Object.keys(ctx.env).length ? { env: ctx.env } : {}),
-    }),
+  const run = await limited(
+    () =>
+      $.process.run([ctx.bin, 'ls', where, '-l', '--output_format', 'json'], {
+        timeoutMs: 60_000,
+        ...(Object.keys(ctx.env).length ? { env: ctx.env } : {}),
+      }),
+    urgent,
   ).catch((err: unknown) => {
     throw spawnFailure(err, ctx.bin)
   })
@@ -484,10 +494,11 @@ async function expandOpen($: EngineInterface, root = ''): Promise<void> {
   }
 }
 
-async function fabRaw($: EngineInterface, args: string[]): Promise<string> {
+async function fabRaw($: EngineInterface, args: string[], urgent = false): Promise<string> {
   const ctx = fabContext
-  const run = await limited(() =>
-    $.process.run([ctx.bin, ...args], { timeoutMs: 60_000, ...(Object.keys(ctx.env).length ? { env: ctx.env } : {}) }),
+  const run = await limited(
+    () => $.process.run([ctx.bin, ...args], { timeoutMs: 60_000, ...(Object.keys(ctx.env).length ? { env: ctx.env } : {}) }),
+    urgent,
   )
   if (run.exitCode !== 0 || run.isStdoutTruncated) throw new Error((run.stderr || run.stdout).trim().split('\n')[0] || `fab ${args[0]} failed`)
   return run.stdout
@@ -593,14 +604,21 @@ async function loadDomains($: EngineInterface, withCapacity = false): Promise<vo
 
 async function loadTenant($: EngineInterface): Promise<void> {
   if (tenantName) return
-  const status = await fabRaw($, ['auth', 'status']).catch(() => '')
+  const saved = (await $.store.get('tenant').catch(() => undefined)) as { id?: string; name?: string } | undefined
+  if (saved?.id && saved.name) {
+    tenantId = saved.id
+    tenantName = saved.name
+    return
+  }
+  const status = await fabRaw($, ['auth', 'status'], true).catch(() => '')
   const id = status.match(/Tenant ID:\s*([0-9a-f-]{36})/i)?.[1]?.toLowerCase()
   if (!id) return
   tenantId = id
   const body = jsonOf<{ text?: { value?: { tenantId?: string; displayName?: string }[] } }>(
-    await fabRaw($, ['api', '-A', 'azure', 'tenants?api-version=2022-12-01']).catch(() => ''),
+    await fabRaw($, ['api', '-A', 'azure', 'tenants?api-version=2022-12-01'], true).catch(() => ''),
   )
   tenantName = body?.text?.value?.find(x => x.tenantId?.toLowerCase() === id)?.displayName ?? ''
+  if (tenantName) await $.store.set('tenant', { id, name: tenantName }).catch(() => undefined)
 }
 
 const GROUP_KINDS = new Set(['domain', 'capacity'])
@@ -660,7 +678,7 @@ function withSettings(nodes: TreeNode[]): TreeNode[] {
 }
 
 async function loadSettings($: EngineInterface): Promise<TreeNode[]> {
-  const body = jsonOf<{ text?: { tenantSettings?: Setting[] }; status_code?: number }>(await fabRaw($, ['api', 'admin/tenantsettings']))
+  const body = jsonOf<{ text?: { tenantSettings?: Setting[] }; status_code?: number }>(await fabRaw($, ['api', 'admin/tenantsettings'], true))
   const list = body?.text?.tenantSettings
   if (!list) throw new Error(body?.status_code === 403 || body?.status_code === 401 ? 'tenant settings need a Fabric admin' : 'no tenant settings returned')
   settingOf.clear()
@@ -816,7 +834,7 @@ async function reloadWorkspace($: EngineInterface, workspace: string): Promise<b
   return ws ? reloadNode($, ws.id) : true
 }
 
-function expandFabric($: EngineInterface, n: TreeNode): Promise<boolean> {
+function expandFabric($: EngineInterface, n: TreeNode, urgent = false): Promise<boolean> {
   const running = loading.get(n.id)
   if (running) return running
   const job = (async () => {
@@ -836,7 +854,7 @@ function expandFabric($: EngineInterface, n: TreeNode): Promise<boolean> {
     }
     if (inOneLake(n) && capacityState.size === 0) await warmGroups($)
     try {
-      const { kids, become } = listing(await fabLs($, n.path), n, ex.nodes)
+      const { kids, become } = listing(await fabLs($, n.path, urgent), n, ex.nodes)
       const owned = statusOwner === n.id
       if (owned) statusOwner = ''
       const fill = kids.length ? kids : become === 'lakehouse table' ? [] : [emptyMark(n.id)]
@@ -885,8 +903,9 @@ async function openLocal($: EngineInterface, ex: Explorer, n: TreeNode): Promise
   else if (webUrl(ex, n)) await openUrl($, webUrl(ex, n))
 }
 
-function tenantNode(): TreeNode {
-  return { id: TENANT, parent: '', kind: 'tenant', name: tenantName || 'Fabric tenant', path: '', hidden: false, sig: tenantId, note: '' }
+function tenantNode(nodes?: TreeNode[]): TreeNode {
+  const spaces = nodes ? nodes.filter(x => x.kind === 'workspace').length : 0
+  return { id: TENANT, parent: '', kind: 'tenant', name: tenantName || 'Fabric tenant', path: '', hidden: false, sig: tenantId, note: spaces ? plural(spaces, 'workspace') : '' }
 }
 
 const ROW_PX = 24
@@ -926,7 +945,7 @@ function treeRows(ex: Explorer): Row[] {
   const base = visible(ex, SORT, rootOf(ex))
   if (rootOf(ex)) return base
   const open = !ex.expanded.includes(TENANT_CLOSED)
-  return [{ node: tenantNode(), depth: 0, open, leaf: false }, ...(open ? base.map(r => ({ ...r, depth: r.depth + 1 })) : [])]
+  return [{ node: tenantNode(ex.nodes), depth: 0, open, leaf: false }, ...(open ? base.map(r => ({ ...r, depth: r.depth + 1 })) : [])]
 }
 
 async function select($: EngineInterface, n: TreeNode): Promise<void> {
@@ -950,7 +969,7 @@ async function select($: EngineInterface, n: TreeNode): Promise<void> {
     if (!isLeaf) open.has(n.id) ? open.delete(n.id) : open.add(n.id)
     return { expanded: [...open], cursor: n.id, selected: n.path ? n.id : cur.selected }
   })
-  if (!isLeaf && (await expandFabric($, n))) await expandOpen($, n.id)
+  if (!isLeaf && (await expandFabric($, n, true))) await expandOpen($, n.id)
   const detail: string[] = [`${n.kind} ${n.name}`, ...(n.path ? [`fab path: ${n.path}`] : n.note ? [n.note] : [])]
   await patchView($, cur => (cur.cursor === n.id ? { detail } : {}))
   const props = await properties($, n).catch((err: unknown) => [`properties unavailable: ${errorText(err)}`])
@@ -988,7 +1007,7 @@ async function namesOf($: EngineInterface, list: string, suffix: RegExp, into: M
 async function properties($: EngineInterface, n: TreeNode): Promise<string[]> {
   const path = apiPathOf(n)
   if (!path) return []
-  const body = jsonOf<Record<string, unknown>>(await fabRaw($, ['api', path, '-q', 'text']))
+  const body = jsonOf<Record<string, unknown>>(await fabRaw($, ['api', path, '-q', 'text'], true))
   if (!body) return []
   await Promise.all([
     body.capacityId ? namesOf($, '/.capacities', /\.Capacity$/i, capacityName) : Promise.resolve(),
@@ -1393,7 +1412,7 @@ export const register: Register = (on, options) => {
       const note = noteOf(r)
       const faded = n.hidden || n.kind === PLACEHOLDER || n.kind === EMPTY
       const room = Math.max(4, width - r.depth * 2 - 8 - note.length)
-      const label = clip(n.name, room).padEnd(room)
+      const label = clip(n.name, room)
       const busy = busyTone(n.id)
       const spinning = n.kind === PLACEHOLDER && n.name === 'loading…'
       return (
@@ -1408,7 +1427,7 @@ export const register: Register = (on, options) => {
             ))
           )}
           <Box width={2} flexShrink={0} flexDirection="row" alignItems="center">
-            {r.leaf ? null : icon16(FABRIC_SVG[r.open ? 'ui:chevron-down' : 'ui:chevron-right'], r.open ? 'collapse' : 'expand', { t: r.open ? '⌄' : '›', c: MUTED }, `c:${n.id}`)}
+            {r.leaf ? null : <Button key={`c:${n.id}`} plain dimColor label={r.open ? '⌄' : '›'} onPress={() => pressNow($, n, r)} />}
           </Box>
           <Box flexDirection="row" alignItems="center" gap={1} flexShrink={1}>
             {spinning ? null : icon16(FABRIC_SVG[n.kind] ?? (n.kind === 'tenant setting' ? FABRIC_SVG[n.note.startsWith('On') ? 'ui:on' : 'ui:off'] : undefined), typeLabel(n.kind), { t: g.char, c: g.color }, `i:${n.id}`)}
@@ -1455,7 +1474,17 @@ export const register: Register = (on, options) => {
         {ex.target && toggle('capacities', ex.byCapacity === true, 'capacity', 'capacities', '\u{f04c5}', '◔', () => quiet(toggleCapacity($)))}
         {rootNode && <Button key="up" plain dimColor label={icon('\u{f005d}', '↑')} onPress={() => quiet(goUp($))} />}
         {rootNode && <Button key="home" plain dimColor label={icon('\u{f02dc}', '⌂')} onPress={() => quiet(goHome($))} />}
-        <Button key="refresh" plain dimColor label={icon('\u{f0450}', '↻')} onPress={() => quiet(refresh($))} />
+        <Button
+          key="refresh"
+          plain
+          dimColor
+          label={icon('\u{f0450}', '↻')}
+          onPress={() => {
+            tenantName = ''
+            quiet($.store.delete('tenant'))
+            quiet(refresh($))
+          }}
+        />
         <Button key="collapse" plain dimColor label={icon('\u{eac5}', '⊟')} onPress={() => quiet(patchView($, () => ({ expanded: [] })))} />
         <Text> </Text>
       </Box>
