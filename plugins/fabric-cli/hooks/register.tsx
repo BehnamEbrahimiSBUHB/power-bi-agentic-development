@@ -4,6 +4,7 @@ import { LINUX_LAUNCH as LAUNCH, openCommand } from './open'
 import type { Explorer, Target, TreeNode } from '../types'
 import { glyph, type Tier } from './icons'
 import { FABRIC_SVG } from './svg-data'
+import { SETTING_DOCS } from './setting-data'
 import type { RowSpec, RowsProps, Seg } from './rows'
 import { ancestors, EMPTY, empty, emptyMark, isLoaded, merge, type Row, visible } from './tree'
 import { inOneLake, modelOf, parseChildren, parseOneLake, parseWorkspaces, PLACEHOLDER, typeLabel } from './fabric'
@@ -503,6 +504,19 @@ const capacityName = new Map<string, string>()
 let tenantName = ''
 let tenantId = ''
 const capacityState = new Map<string, string>()
+const capacitySku = new Map<string, string>()
+const SETTINGS_INDEX = 'https://learn.microsoft.com/fabric/admin/tenant-settings-index'
+
+function skuLabel(sku: string): string {
+  const up = sku.trim().toUpperCase()
+  if (!up) return ''
+  if (up === 'PP3') return 'Premium Per User'
+  if (up === 'EM' || /^A\d+$/.test(up)) return 'Embedded'
+  if (/^P\d+$/.test(up)) return `Premium ${up}`
+  if (/^F\d+$/.test(up)) return `Fabric ${up}`
+  if (/^FT\d+$/.test(up)) return 'Fabric trial'
+  return sku.trim()
+}
 type Setting = { settingName: string; title?: string; enabled?: boolean; tenantSettingGroup?: string; canSpecifySecurityGroups?: boolean; delegateToWorkspace?: boolean; delegateToCapacity?: boolean; delegateToDomain?: boolean; enabledSecurityGroups?: { name?: string }[]; excludedSecurityGroups?: { name?: string }[] }
 const settingOf = new Map<string, Setting>()
 const TENANT = '#tenant'
@@ -547,10 +561,11 @@ async function loadDomains($: EngineInterface, withCapacity = false): Promise<vo
   for (const d of names?.result?.data ?? []) if (d.id && d.name) domainName.set(d.id.toLowerCase(), d.name.replace(/\.Domain$/i, ''))
   const caps = jsonOf<{ result?: { data?: { name?: string; id?: string }[] } }>(capacityList)
   capacityName.clear()
-  for (const c of (caps?.result?.data ?? []) as { id?: string; name?: string; state?: string }[]) {
+  for (const c of (caps?.result?.data ?? []) as { id?: string; name?: string; state?: string; sku?: string }[]) {
     if (!c.id || !c.name) continue
     capacityName.set(c.id.toLowerCase(), c.name.replace(/\.Capacity$/i, ''))
     if (c.state) capacityState.set(c.id.toLowerCase(), c.state)
+    if (c.sku) capacitySku.set(c.id.toLowerCase(), c.sku)
   }
   const found = new Map<string, string>()
   const onCapacity = new Map<string, string>()
@@ -622,7 +637,10 @@ function grouped(nodes: TreeNode[], on: boolean, byCapacity = false): TreeNode[]
   }
   const placed = flat.map(n => (n.kind === 'workspace' ? { ...n, parent: parentOf(n) } : n))
   const sorted = [...groups.values()]
-    .map(g => ({ ...g, note: [g.kind === 'capacity' && paused(g.sig) ? 'paused' : '', plural(counts.get(g.id) ?? 0, 'workspace')].filter(Boolean).join(' · ') }))
+    .map(g => ({
+      ...g,
+      note: [g.kind === 'capacity' ? skuLabel(capacitySku.get(g.sig) ?? '') : '', g.kind === 'capacity' && paused(g.sig) ? 'paused' : '', plural(counts.get(g.id) ?? 0, 'workspace')].filter(Boolean).join(' · '),
+    }))
     .sort((a, b) => last(a.name, b.name, [a.sig === 'none', b.sig === 'none']))
   return withSettings([...sorted, ...placed])
 }
@@ -656,10 +674,22 @@ async function loadSettings($: EngineInterface): Promise<TreeNode[]> {
     const on = items.filter(s => s.enabled).length
     out.push({ id, parent: SETTINGS, kind: 'setting group', name: g, path: '', hidden: false, sig: '', note: `${on} of ${items.length} on` })
     for (const s of [...items].sort((a, b) => (a.title ?? '').localeCompare(b.title ?? ''))) {
-      out.push({ id: `${id}/${s.settingName}`, parent: id, kind: 'tenant setting', name: s.title || s.settingName, path: '', hidden: false, sig: s.settingName, note: s.enabled ? 'On' : 'Off' })
+      out.push({ id: `${id}/${s.settingName}`, parent: id, kind: 'tenant setting', name: s.title || s.settingName, path: '', hidden: false, sig: s.settingName, note: stateOf(s) })
     }
   }
   return out
+}
+
+function scoped(s: Setting): boolean {
+  return Boolean(s.enabledSecurityGroups?.length || s.excludedSecurityGroups?.length || s.delegateToWorkspace || s.delegateToCapacity || s.delegateToDomain)
+}
+
+function stateOf(s: Setting): string {
+  return s.enabled ? (scoped(s) ? 'On · scoped' : 'On') : 'Off'
+}
+
+function settingDocs(name: string): string {
+  return SETTING_DOCS[name]?.[0] || SETTINGS_INDEX
 }
 
 function settingDetail(name: string): string[] {
@@ -667,13 +697,17 @@ function settingDetail(name: string): string[] {
   if (!s) return []
   const names = (list?: { name?: string }[]) => (list ?? []).map(x => x.name).filter(Boolean).join(', ')
   const delegated = [s.delegateToWorkspace ? 'workspace' : '', s.delegateToCapacity ? 'capacity' : '', s.delegateToDomain ? 'domain' : ''].filter(Boolean).join(', ')
+  const [, description, byDefault, recommended, risk] = SETTING_DOCS[name] ?? ['', '', '', '', '']
   return [
-    `State: ${s.enabled ? 'On' : 'Off'}`,
+    `State: ${stateOf(s)}`,
+    ...(byDefault ? [`Default: ${byDefault}`] : []),
+    ...(recommended ? [`Recommended: ${recommended}${risk ? ` (${risk} risk)` : ''}`] : []),
     `Setting: ${s.settingName}`,
     `Group: ${s.tenantSettingGroup ?? ''}`,
     ...(names(s.enabledSecurityGroups) ? [`Applies to: ${names(s.enabledSecurityGroups)}`] : s.enabled ? ['Applies to: entire organization'] : []),
     ...(names(s.excludedSecurityGroups) ? [`Except: ${names(s.excludedSecurityGroups)}`] : []),
     ...(delegated ? [`Delegated to: ${delegated}`] : []),
+    ...(description ? [`About: ${description}`] : []),
   ]
 }
 
@@ -1339,7 +1373,7 @@ export const register: Register = (on, options) => {
             {r.leaf ? null : icon16(FABRIC_SVG[r.open ? 'ui:chevron-down' : 'ui:chevron-right'], r.open ? 'collapse' : 'expand', { t: r.open ? '⌄' : '›', c: MUTED }, `c:${n.id}`)}
           </Box>
           <Box flexDirection="row" alignItems="center" gap={1} flexShrink={1}>
-            {icon16(FABRIC_SVG[n.kind] ?? (n.kind === 'tenant setting' ? FABRIC_SVG[n.note === 'On' ? 'ui:on' : 'ui:off'] : undefined), typeLabel(n.kind), { t: g.char, c: g.color }, `i:${n.id}`)}
+            {icon16(FABRIC_SVG[n.kind] ?? (n.kind === 'tenant setting' ? FABRIC_SVG[n.note.startsWith('On') ? 'ui:on' : 'ui:off'] : undefined), typeLabel(n.kind), { t: g.char, c: g.color }, `i:${n.id}`)}
             {faded ? <Text color={MUTED}>{label}</Text> : <Button key={`r:${n.id}`} plain label={label} onPress={() => quiet(press($, n))} />}
             {busy ? <Text color={TONES[busy]?.bright[1]}>…</Text> : null}
           </Box>
@@ -1455,7 +1489,13 @@ export const register: Register = (on, options) => {
                 </Box>
               </Box>
             ))}
-            {pathed && rule('rule-actions')}
+            {(pathed || shownNode.kind === 'tenant setting') && rule('rule-actions')}
+            {shownNode.kind === 'tenant setting' && (
+              <Box flexDirection="row" alignItems="center" gap={1}>
+                {native ? icon16(FABRIC_SVG['ui:open'], 'Open docs', { t: '', c: MUTED }, 'ai:docs') : null}
+                <Button key="docs" plain label={native ? 'Open docs' : `${icon('\u{f0379}', '↗')} Open docs`} onPress={() => quiet(openUrl($, settingDocs(shownNode.sig)))} />
+              </Box>
+            )}
             {pathed && (
             <Box flexDirection="row" alignItems="center" gap={2}>
               {actions.map(a => (

@@ -85,7 +85,7 @@ export function glyph(n: TreeNode, tier: Tier): Glyph {
   if (n.kind === 'fabric folder') return pick({ fabric: 0, nerd: '\u{f024b}', rgb: GLYPH_DIM }, tier, '■')
   if (n.kind === 'tenant') return { ...pick({ fabric: 0, nerd: '\u{f0c40}', rgb: [94, 234, 212] }, tier, '◆'), label: hex([204, 251, 241]) }
   if (n.kind === 'tenant settings' || n.kind === 'setting group') return pick({ fabric: 0, nerd: '\u{f0493}', rgb: GLYPH_DIM }, tier, '⚙')
-  if (n.kind === 'tenant setting') return pick({ fabric: 0, nerd: n.note === 'On' ? '\u{f0134}' : '\u{f0130}', rgb: n.note === 'On' ? [74, 222, 128] : GLYPH_DIM }, tier, n.note === 'On' ? '●' : '○')
+  if (n.kind === 'tenant setting') return pick({ fabric: 0, nerd: n.note.startsWith('On') ? '\u{f0134}' : '\u{f0130}', rgb: n.note.startsWith('On') ? [74, 222, 128] : GLYPH_DIM }, tier, n.note.startsWith('On') ? '●' : '○')
   if (n.kind === 'capacity') return { ...pick({ fabric: 0, nerd: '\u{f04c5}', rgb: [94, 234, 212] }, tier, '◔'), label: hex([204, 251, 241]) }
   if (n.kind === 'domain') return { ...pick({ fabric: 0, nerd: '\u{f0ac}', rgb: [196, 181, 253] }, tier, '◇'), label: hex([221, 214, 254]) }
   if (n.kind === 'lakehouse folder' || n.kind === 'onelake folder' || n.kind === 'onelake dir' || n.kind === 'onelake schema') return pick({ fabric: 0, nerd: '\u{f024b}', rgb: GLYPH_DIM }, tier, '■')
