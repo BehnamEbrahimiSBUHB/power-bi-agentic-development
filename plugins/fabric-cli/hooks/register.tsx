@@ -1541,7 +1541,7 @@ export const register: Register = (on, options) => {
         {shownNode && ex.detail.length > 0 && (
           <Box key="details" flexDirection="column">
             {rule('rule-top')}
-            <Box flexDirection="row" alignItems="center" gap={1}>
+            <Box flexDirection="row" alignItems="center" gap={1} marginBottom={1}>
               {icon16(FABRIC_SVG[shownNode.kind], typeLabel(shownNode.kind), { t: glyph(shownNode, tier).char, c: glyph(shownNode, tier).color }, 'sel')}
               <Text bold wrap="truncate-end">{shownNode.name}</Text>
               <Box flexGrow={1} />
