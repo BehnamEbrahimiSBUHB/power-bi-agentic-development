@@ -1563,8 +1563,6 @@ export const register: Register = (on, options) => {
               <Box flexDirection="row" alignItems="center" gap={1} flexGrow={1}>
                 {icon16(FABRIC_SVG[shownNode.kind], typeLabel(shownNode.kind), { t: glyph(shownNode, tier).char, c: glyph(shownNode, tier).color }, 'sel')}
                 <Text bold wrap="truncate-end">{shownNode.name}</Text>
-                <Box flexGrow={1} />
-                {sel && <Button key="clear" plain dimColor label="✕" onPress={() => quiet(patchView($, () => ({ selected: '', detail: [] })))} />}
               </Box>,
             ),
             line('d:gap', <Text> </Text>),
@@ -1581,7 +1579,7 @@ export const register: Register = (on, options) => {
                 </Box>,
               ),
             ),
-            ...(pathed || shownNode.kind === 'tenant setting' ? [line('d:rule', rule('rule-actions'))] : []),
+            ...(pathed || shownNode.kind === 'tenant setting' ? [line('d:rule', <Text color="#2e2e34">{'─'.repeat(400)}</Text>)] : []),
             ...(shownNode.kind === 'tenant setting'
               ? [
                   line(
@@ -1615,22 +1613,15 @@ export const register: Register = (on, options) => {
           ]
         : []
       const headRows = 4 + (pending ? 1 : 0) + (!ex.setup && ex.nodes.length === 0 ? 1 : 0)
-      const at = shownNode ? rows.findIndex(r => r.node.id === shownNode.id) : -1
-      const indent = at >= 0 ? (rows[at]!.depth + 1) * 2 + 1 : 1
-      const inline = detailLines.map((d, i) => (
-        <Box key={`dl:${i}`} height={1} flexDirection="row" paddingLeft={indent} backgroundColor="#1b1c20">
-          {d}
-        </Box>
-      ))
-      const lines = [
-        ...(at < 0 ? inline : []),
-        ...rows.flatMap((r, i) => (i === at ? [nativeRow(r), ...inline] : [nativeRow(r)])),
-      ]
+      const panelRows = detailLines.length ? Math.min(detailLines.length + 1, Math.max(6, Math.floor(body * 0.45))) : 0
+      const lines = rows.map(nativeRow)
       const offset = e.props.scroll?.offset ?? 0
       const first = Math.max(0, offset - headRows - body)
       const last = Math.min(lines.length, offset - headRows + body * 2)
+      const total = Math.max(body, headRows + lines.length + panelRows)
+      const panelTop = Math.min(offset + body, total) - panelRows
       return (
-        <Box flexDirection="column">
+        <Box flexDirection="column" position="relative" height={total}>
           <Box key="desk-body" height={1} flexDirection="row" alignItems="center">
             <Box flexGrow={1} flexShrink={1} flexDirection="row" alignItems="center" gap={1}>
               {icon16(FABRIC_SVG.fabric, 'Microsoft Fabric', { t: titleGlyph(tier), c: TITLE_COLOR }, 'logo')}
@@ -1670,6 +1661,14 @@ export const register: Register = (on, options) => {
               {last < lines.length ? <Box key="below" height={lines.length - Math.max(first, last)} /> : null}
             </Box>
           )}
+          {panelRows ? (
+            <Box key="panel" position="absolute" top={panelTop} left={0} right={0} height={panelRows} flexDirection="column" overflow="hidden" backgroundColor="#1b1c20">
+              <Box key="panel-rule" height={1} overflow="hidden">
+                <Text color="#2e2e34">{'─'.repeat(400)}</Text>
+              </Box>
+              {detailLines.slice(0, panelRows - 1)}
+            </Box>
+          ) : null}
         </Box>
       )
     }
