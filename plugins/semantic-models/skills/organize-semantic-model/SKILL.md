@@ -62,10 +62,11 @@ Hide what report authors should not drag into a visual: surrogate and foreign ke
 
 ## Pass 7: descriptions
 
-Every visible table, column, measure, hierarchy and function gets a description. Write what a user cannot tell from the name: format and an example value, grain, inclusions and exclusions, unit and currency, acronyms spelled out, and for measures what is aggregated under which filters. Skip the obvious.
+Every visible table, column, measure, hierarchy and function gets a description. As few words as possible, as many as necessary: only what the name does not already say (format, an example value, grain, exclusions, unit or currency, an acronym spelled out, what a measure aggregates). Fragments are fine; do not restate the name, the table or its relationships.
 
-- `Month Label`: "Month and year as short text, for example Mar 2025. Sorted chronologically."
-- `Net Sales`: "Invoiced sales after discounts and returns, in the invoice's local currency. Excludes freight and taxes."
+- `Month Label`: "e.g. Mar 2025."
+- `Month Sort`: "YYYYMM, e.g. 202503. Sorts Month Label."
+- `Net Sales`: "After discounts and returns, local currency. Excludes freight and taxes."
 
 ## Pass 8: format strings
 
@@ -77,18 +78,18 @@ Set `DataCategory` where it changes client behavior: geography (`Country`, `Stat
 
 ## Pass 10: context annotation
 
-Add an annotation named `context` (`obj.SetAnnotation("context", "...")`) to objects whose purpose a reader would not guess: sort keys, role-playing keys, helper tables, columns that exist for RLS or a calculation group, disconnected parameter tables, anything kept for a downstream dependency. One or two sentences on why it exists and what uses it.
+Add an annotation named `context` (`obj.SetAnnotation("context", "...")`) to objects whose purpose a reader would not guess: sort keys, role-playing keys, helper tables, columns that exist for RLS or a calculation group, disconnected parameter tables, anything kept for a downstream dependency. A few words on why it exists and what uses it, for example "Sort key for Month Label."
 
 ## Pass 11: calculated tables and columns
 
-Each DAX calculated table and calculated column must justify itself in its description or `context` annotation: why it is calculated in the model, why it must exist, and why it cannot come from the source (for example: derived from several fact tables at refresh time, depends on model relationships, or the source is a read-only view). If no reason holds, recommend moving it upstream rather than inventing one.
+Each DAX calculated table and calculated column must justify itself in its `context` annotation, in one short sentence: why it is calculated in the model, why it must exist, and why it cannot come from the source (for example: derived from several fact tables at refresh time, depends on model relationships, or the source is a read-only view). If no reason holds, recommend moving it upstream rather than inventing one.
 
 ## Pass 12: DAX code
 
 - Format every measure, calculated column, calculated table, calculation item and function expression. In a TE script, `obj.FormatDax()` formats at the end of the script
 - Prefix every variable with `_` (`VAR _StartDate`) and every temporary column created by `ADDCOLUMNS`, `ROW`, `SELECTCOLUMNS` or `SUMMARIZECOLUMNS` with `@` (`"@BusinessDate"`, referenced as `[@BusinessDate]`), so neither can be mistaken for a model table or column
 - Apply TE3's code actions by hand. The editor shows them (DR001 to DR014, RW001 to RW003 on docs.tabulareditor.com/en/features/code-actions.html), but the MCP exposes neither the actions nor their lint markers, so an agent has to check for them: scalar predicates instead of `FILTER` on one column, aggregators instead of single-column iterators, `VALUES` instead of single-column `SUMMARIZE`, the two prefixes above, constant aggregations moved into variables, `DISTINCTCOUNT`, `COALESCE`, `ISBLANK`, `IN` instead of chained `||` equalities, no unused variables
-- Comment atypical logic inside the expression with `//`: a deliberate `ALL` that removes a filter users might expect to apply, a workaround for an engine quirk, a magic number's meaning. Do not comment the obvious
+- Comment atypical logic inside the expression with one short `//` line: a deliberate `ALL` that removes a filter users might expect to apply, a workaround for an engine quirk, a magic number's meaning. Do not comment the obvious
 
 ## Pass 13: user-defined functions
 
