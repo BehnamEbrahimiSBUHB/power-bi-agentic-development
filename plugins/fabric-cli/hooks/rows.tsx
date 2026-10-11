@@ -15,7 +15,6 @@ type Local = { hover: number; phase: number; drag: boolean; ref: { stop?: () => 
 
 const TICK_MS = 90
 const FRAMES = ['O  ', 'oO ', '.oO', ' .O', '  O', ' Oo', 'Oo.', 'O. ']
-const CLAUDE = ['▐▛███▜▌ ', '▐▛███▜▌ ', '▐▛███▜▌ ', ' ▐▛███▜▌', ' ▐▛███▜▌', ' ▐▛███▜▌', '▐▛███▜▌ ', '▐▛███▜▌ ', '▐█████▌ ', '▐▛███▜▌ ', '▐▛███▜▌ ', '▐▛███▜▌ ']
 const GRADIENT = ['#5eead4', '#67e8f9', '#7dd3fc', '#93c5fd', '#a5b4fc', '#c4b5fd', '#d8b4fe', '#f0abfc', '#d8b4fe', '#c4b5fd', '#a5b4fc', '#93c5fd', '#7dd3fc', '#67e8f9']
 
 function shimmer(i: number, phase: number, len: number, palette: string[]): string {
@@ -84,9 +83,10 @@ const Rows: ClientModule<RowsProps, Local> = (props, surface) => {
   surface.onKey(e => surface.post({ key: e.key, ctrl: Boolean(e.ctrl), shift: Boolean(e.shift) }))
   const draw = (s: Seg, k: number) => {
     if (s.claude) {
+      const shut = Math.floor(state.phase / 3) % 12 === 11
       return (
-        <Text key={String(k)} color="#d97757">
-          {CLAUDE[Math.floor(state.phase / 2) % CLAUDE.length] ?? ''}
+        <Text key={String(k)} color={shut ? '#7a4535' : '#d97757'} bold={!shut}>
+          {s.t}
         </Text>
       )
     }

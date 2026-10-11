@@ -1495,7 +1495,6 @@ export const register: Register = (on, options) => {
     const shown = rows.slice(from, from + room - pinned.length)
     const sel = ex.nodes.find(n => n.id === ex.selected)
     const clip = (s: string, max = width) => (s.length > max ? s.slice(0, max - 1) + '…' : s)
-    const spin = (tone: string): Seg => ({ t: ' ', spin: true, b: true, c: TONES[tone]?.bright[1] ?? SHIMMER[1] })
     const kids = new Map<string, number>()
     for (const k of ex.nodes) if (k.parent && k.kind !== PLACEHOLDER && k.kind !== EMPTY && !GROUP_KINDS.has(k.kind)) kids.set(k.parent, (kids.get(k.parent) ?? 0) + 1)
     const noteOf = (r: (typeof rows)[number]) => r.node.note || (r.open && kids.get(r.node.id) ? plural(kids.get(r.node.id) ?? 0, 'item') : '')
@@ -1505,7 +1504,7 @@ export const register: Register = (on, options) => {
       const arrow = r.leaf ? '  ' : tier === 'plain' ? (r.open ? '▾ ' : '▸ ') : r.open ? '\u{f47c} ' : '\u{f460} '
       const note = n.note ? ` ${padCount(n.note)}` : ''
       const busy = busyTone(n.id)
-      const cols = Math.max(4, width - r.depth * 2 - 6 - note.length - (busy ? 4 : 0))
+      const cols = Math.max(4, width - r.depth * 2 - 6 - note.length)
       const isBright = brightSet.has(n.id) || (work !== null && busy !== '')
       const isDim = !isBright && dimSet.has(n.id)
       const name = clip(n.name, cols)
@@ -1517,7 +1516,6 @@ export const register: Register = (on, options) => {
         isBright || isDim ? { t: g.char + ' ', sh: tone, dim: isDim, one: true } : { t: g.char + ' ', c: faded ? '#6e6e7a' : g.color },
         isBright || isDim ? { t: name, sh: tone, dim: isDim, b: isBright } : { t: name, c: faded ? '#6e6e7a' : g.label, b: n.id === ex.selected },
       ]
-      if (busy) left.push(spin(busy))
       const run = runState(n)
       const state: Seg[] = run ? [{ t: (tier === 'plain' ? (run === 'paused' ? '‖' : '▸') : run === 'paused' ? '\u{f03e4}' : '\u{f040a}') + ' ', c: run === 'paused' ? '#d9a54a' : run === 'fixed' ? '#6e6e7a' : '#5cc28a' }] : []
       const [sku, tail] = splitNote(n, padCount(note.trim()))
@@ -1540,7 +1538,6 @@ export const register: Register = (on, options) => {
         { t: `${titleGlyph(tier)} `, c: TITLE_COLOR },
         { t: headName, b: true },
         ...(ex.status ? [{ t: `  ${ex.status}`, c: '#6e6e7a' }] : []),
-        ...(busyTone(HEADER) ? [spin(busyTone(HEADER))] : []),
       ]),
       right: [],
     }
@@ -1804,7 +1801,7 @@ export const register: Register = (on, options) => {
         <Box flexDirection="row" alignItems="center" marginTop={1} marginBottom={1} gap={1}>
           <Box flexGrow={1} flexShrink={1} width="100%">
             {work && !ex.query ? (
-              <Client key="working" module="./rows.tsx" props={{ rows: [{ id: '', left: [{ t: '', claude: true }, { t: ' Claude is working in Fabric...', sh: 'orange' }], right: [] }], active: '', activeBg: '', hoverBg: '', tones: TONES } satisfies RowsProps} />
+              <Client key="working" module="./rows.tsx" props={{ rows: [{ id: '', left: [{ t: '', spin: true }, { t: ' ' }, { t: tier === 'plain' ? '*' : '\u{ec82}', claude: true }, { t: ' Claude is working in Fabric...', sh: 'orange' }], right: [] }], active: '', activeBg: '', hoverBg: '', tones: TONES } satisfies RowsProps} />
             ) : (
               <Input
                 key="q"
