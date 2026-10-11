@@ -666,6 +666,12 @@ function grouped(nodes: TreeNode[], on: boolean, byCapacity = false): TreeNode[]
   return withSettings([...sorted, ...placed])
 }
 
+function splitNote(n: TreeNode, note: string): [string, string] {
+  if (!runState(n)) return ['', note]
+  const cut = note.indexOf(' - ')
+  return cut < 0 ? ['', note] : [note.slice(0, cut), note.slice(cut)]
+}
+
 function runState(n: TreeNode): 'paused' | 'running' | '' {
   if (n.kind !== 'capacity' || !capacityState.has(n.sig.toLowerCase())) return ''
   return paused(n.sig) ? 'paused' : 'running'
@@ -1425,7 +1431,9 @@ export const register: Register = (on, options) => {
       if (busy) left.push(spin(busy))
       const run = runState(n)
       const state: Seg[] = run ? [{ t: (tier === 'plain' ? (run === 'paused' ? '‖' : '▸') : run === 'paused' ? '\u{f03e4}' : '\u{f040a}') + ' ', c: run === 'paused' ? '#d9a54a' : '#5cc28a' }] : []
-      return { id: n.kind === 'placeholder' || n.kind === EMPTY ? '' : n.id, left: clean(left), right: [...state, ...(note ? [{ t: note, c: '#6e6e7a' }] : [])] }
+      const [sku, tail] = splitNote(n, note.trim())
+      const right: Seg[] = sku ? [{ t: ` ${sku} `, c: '#6e6e7a' }, ...state.map(s => ({ ...s, t: s.t.trimEnd() })), { t: tail, c: '#6e6e7a' }] : [...state, ...(note ? [{ t: note, c: '#6e6e7a' }] : [])]
+      return { id: n.kind === 'placeholder' || n.kind === EMPTY ? '' : n.id, left: clean(left), right }
     }
     const note = (text: string): RowSpec => ({ id: '', left: [{ t: text, c: '#6e6e7a' }], right: [] })
     const specs: RowSpec[] = [...pinned.map(rowSpec), ...(pinned.length > 0 ? [note('  ⋮')] : []), ...shown.map(rowSpec)]
@@ -1489,8 +1497,9 @@ export const register: Register = (on, options) => {
             {busy ? <Text color={TONES[busy]?.bright[1]}>…</Text> : null}
           </Box>
           <Box flexGrow={1} />
-          {runState(n) ? icon16(FABRIC_SVG[runState(n) === 'paused' ? 'ui:pause' : 'ui:play'], runState(n), { t: '', c: MUTED }, `st:${n.id}`) : null}
-          {note ? <Text color={MUTED}>{note}</Text> : null}
+          {splitNote(n, note)[0] ? <Text color={MUTED}>{splitNote(n, note)[0]}</Text> : null}
+          {runState(n) ? <Box marginLeft={splitNote(n, note)[0] ? 1 : 0} marginRight={splitNote(n, note)[0] ? 0 : 1}>{icon16(FABRIC_SVG[runState(n) === 'paused' ? 'ui:pause' : 'ui:play'], runState(n), { t: '', c: MUTED }, `st:${n.id}`)}</Box> : null}
+          {splitNote(n, note)[1] ? <Text color={MUTED}>{splitNote(n, note)[1]}</Text> : null}
           {faded ? null : (
             <Box position="absolute" top={0} left={0} right={0} bottom={0}>
               <Client key={`z:${n.id}`} module="./zone.tsx" props={{ id: n.id } satisfies ZoneProps} width="100%" height="100%" />
