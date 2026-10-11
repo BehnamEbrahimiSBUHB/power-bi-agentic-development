@@ -3,6 +3,7 @@ import { LINUX_LAUNCH as LAUNCH, openCommand } from './open'
 
 import type { Explorer, Target, TreeNode } from '../types'
 import { glyph, type Tier } from './icons'
+import { FABRIC_SVG } from './svg-data'
 import type { RowSpec, RowsProps, Seg } from './rows'
 import { ancestors, EMPTY, empty, emptyMark, isLoaded, merge, visible } from './tree'
 import { inOneLake, modelOf, parseChildren, parseOneLake, parseWorkspaces, PLACEHOLDER } from './fabric'
@@ -688,6 +689,24 @@ async function select($: EngineInterface, n: TreeNode): Promise<void> {
   if (!isLeaf && (await expandFabric($, n))) await expandOpen($, n.id)
   const detail: string[] = [`${n.kind} ${n.name}`, ...(n.path ? [`fab path: ${n.path}`] : n.note ? [n.note] : [])]
   await patchView($, cur => (cur.cursor === n.id ? { detail } : {}))
+  const props = await properties($, n).catch(() => [])
+  if (props.length) await patchView($, cur => (cur.cursor === n.id ? { detail: [...detail, ...props] } : {}))
+}
+
+const PROPERTY_KEYS = ['type', 'id', 'displayName', 'description', 'workspaceId', 'folderId', 'capacityId', 'capacityRegion', 'domainId', 'capacityAssignmentProgress']
+
+function apiPathOf(n: TreeNode): string {
+  if (n.kind === 'workspace') return /^[0-9a-f-]{36}$/i.test(n.sig) ? `workspaces/${n.sig}` : ''
+  const m = (n.url ?? '').match(/\/groups\/([0-9a-f-]{36})\/[^/]+\/([0-9a-f-]{36})/i)
+  return m ? `workspaces/${m[1]}/items/${m[2]}` : ''
+}
+
+async function properties($: EngineInterface, n: TreeNode): Promise<string[]> {
+  const path = apiPathOf(n)
+  if (!path) return []
+  const body = jsonOf<Record<string, unknown>>(await fabRaw($, ['api', path, '-q', 'text']))
+  if (!body) return []
+  return PROPERTY_KEYS.filter(k => body[k] !== undefined && body[k] !== null && body[k] !== '').map(k => `${k}: ${String(body[k])}`)
 }
 
 function contextFor(ex: Explorer, n: TreeNode): string {
@@ -992,7 +1011,7 @@ export const register: Register = (on, options) => {
     const dimSet = new Set(work ? ex.flashDim : [])
     const width = Math.max(20, e.props.bodyColumns)
     const rows = visible(ex, SORT, rootOf(ex))
-    const detailRows = ex.detail.length ? Math.min(ex.detail.length, DETAIL_ROWS) + 2 : 0
+    const detailRows = ex.detail.length ? Math.min(ex.detail.length, DETAIL_ROWS) + 3 : 0
     const room = Math.max(5, Math.min(WINDOW, (e.props.scroll?.bodyRows ?? 40) - 4 - detailRows))
     const focusId = follow && work && ex.flash.length ? (ex.flash[ex.flash.length - 1] ?? ex.cursor) : ex.cursor
     const at = Math.max(0, rows.findIndex(r => r.node.id === focusId))
@@ -1064,12 +1083,44 @@ export const register: Register = (on, options) => {
       right: [],
     }
     const spinner = tier === 'plain' ? PLAIN_SPINNER : []
+    const table = $.ui.resolve(e)
+    const Svg = 'Svg' in table ? table.Svg : undefined
+    const icon16 = (source: string | undefined, alt: string, fallback: Seg, key: string) =>
+      Svg && source ? <Svg key={key} source={source} alt={alt} width={16} height={16} /> : <Text key={key} color={fallback.c}>{fallback.t}</Text>
+    const nativeRow = (r: (typeof rows)[number]) => {
+      const n = r.node
+      const g = glyph(n, 'plain')
+      const note = n.note ? ` ${n.note}` : ''
+      const faded = n.hidden || n.kind === 'placeholder' || n.kind === EMPTY
+      const label = clip(n.name, Math.max(4, width - r.depth * 2 - 8 - note.length))
+      const pick = () => quiet(press($, n))
+      return (
+        <Box key={`n:${n.id}`} flexDirection="row" alignItems="center" gap={1} backgroundColor={n.id === ex.cursor ? '#3e4451' : undefined} hover={{ backgroundColor: '#2d2f33' }}>
+          <Text>{'  '.repeat(r.depth)}</Text>
+          {r.leaf ? <Text>{' '}</Text> : <Button key={`t:${n.id}`} plain dimColor label={r.open ? '▾' : '▸'} onPress={() => quiet(select($, n))} />}
+          {icon16(FABRIC_SVG[n.kind], n.note || n.kind, { t: g.char, c: g.color }, `i:${n.id}`)}
+          {faded ? <Text dimColor>{label}</Text> : <Button key={`r:${n.id}`} plain label={label} onPress={pick} />}
+          {busyTone(n.id) ? <Text color={TONES[busyTone(n.id)]?.bright[1]}>…</Text> : null}
+          <Box flexGrow={1} />
+          {note ? <Text dimColor>{note.trim()}</Text> : null}
+        </Box>
+      )
+    }
+    const nativeHead = (
+      <Box flexDirection="row" alignItems="center" gap={1}>
+        {icon16(FABRIC_SVG.fabric, 'Microsoft Fabric', { t: titleGlyph(tier), c: TITLE_COLOR }, 'logo')}
+        <Text bold>{rootName || (ex.target ? targetLabel(ex.target) : TITLE)}</Text>
+        {ex.status ? <Text dimColor>{ex.status}</Text> : null}
+      </Box>
+    )
+    const native = e.surface === 'desktop' && Boolean(Svg)
+    const [title, ...props] = ex.detail.slice(0, DETAIL_ROWS)
     return (
       <Box flexDirection="column" minHeight={Math.max(1, e.props.scroll?.bodyRows ?? 1)}>
         <Box flexDirection="row">
           {domainOf.size > 0 && <Button key="domains" plain dimColor={ex.byDomain === false} label={`${icon('\u{f0ac}', '◇')} `} onPress={() => quiet(toggleDomains($))} />}
           <Box flexGrow={1} flexShrink={1}>
-            <Client key="head" module="./rows.tsx" props={{ rows: [head], active: '', activeBg: '', hoverBg: '', tones: TONES, spinner } satisfies RowsProps} />
+            {native ? nativeHead : <Client key="head" module="./rows.tsx" props={{ rows: [head], active: '', activeBg: '', hoverBg: '', tones: TONES, spinner } satisfies RowsProps} />}
           </Box>
           <Box flexDirection="row" gap={2}>
             {rootNode && <Button key="up" plain dimColor label={icon('\u{f005d}', '↑')} onPress={() => quiet(goUp($))} />}
@@ -1102,25 +1153,43 @@ export const register: Register = (on, options) => {
         {!ex.setup && ex.nodes.length === 0 && <Text dimColor>{ex.target ? 'nothing loaded yet' : HINT}</Text>}
         {ex.setup ? (
           <Client key="setup" module="./rows.tsx" props={{ rows: setupRows(ex.setup, tier, width), active: '', activeBg: '', hoverBg: '#2d2f33', tones: TONES, spinner } satisfies RowsProps} />
+        ) : native ? (
+          <Box key="rows" flexDirection="column">
+            {pinned.map(nativeRow)}
+            {pinned.length > 0 && <Text dimColor>  ⋮</Text>}
+            {shown.map(nativeRow)}
+          </Box>
         ) : (
           <Client key="rows" module="./rows.tsx" props={{ rows: specs, active: ex.cursor, activeBg: '#3e4451', hoverBg: '#2d2f33', tones: TONES, spinner, ...(bar ? { bar } : {}) } satisfies RowsProps} />
         )}
-        {ex.detail.length > 0 && (
-          <Box flexDirection="column" marginTop={1}>
-            {ex.detail.slice(0, DETAIL_ROWS).map((l, i) => (
-              <Text key={String(i)} dimColor={i > 0} bold={i === 0} wrap="truncate-end">
-                {l.replace(/\s+/g, ' ')}
-              </Text>
-            ))}
+        <Box flexGrow={1} />
+        {title !== undefined && (
+          <Box flexDirection="column">
+            <Text dimColor wrap="truncate-end">{'─'.repeat(width)}</Text>
+            <Box flexDirection="row" alignItems="center" gap={1}>
+              {sel && icon16(FABRIC_SVG[sel.kind], sel.note || sel.kind, { t: glyph(sel, tier).char, c: glyph(sel, tier).color }, 'sel')}
+              <Text bold wrap="truncate-end">{title.replace(/\s+/g, ' ')}</Text>
+            </Box>
+            {props.map((l, i) => {
+              const at = l.indexOf(': ')
+              return at > 0 ? (
+                <Box key={String(i)} flexDirection="row">
+                  <Text dimColor>{l.slice(0, at).padEnd(14)}</Text>
+                  <Text wrap="truncate-end">{l.slice(at + 2).replace(/\s+/g, ' ')}</Text>
+                </Box>
+              ) : (
+                <Text key={String(i)} dimColor wrap="truncate-end">{l.replace(/\s+/g, ' ')}</Text>
+              )
+            })}
             {sel && (
               <Box flexDirection="row" gap={2}>
                 {modelOf(sel) && <Button key="open" plain label={`${icon('\u{f0379}', '↗')} open in te`} onPress={() => quiet(openLocal($, ex, sel))} />}
                 {webUrl(ex, sel) && <Button key="web" plain label={`${icon('\u{f059f}', '◎')} open in Fabric`} onPress={() => quiet(openWeb($, ex, sel))} />}
+                <Button key="copy" plain label={`${icon('\u{f018f}', '⧉')} copy fab path`} onPress={press => quiet(copyOf($, sel.path || sel.name, press.surface))} />
               </Box>
             )}
           </Box>
         )}
-        <Box flexGrow={1} />
         {sel && (
           <Text dimColor wrap="truncate-start">
             selected: {sel.path || sel.name}
