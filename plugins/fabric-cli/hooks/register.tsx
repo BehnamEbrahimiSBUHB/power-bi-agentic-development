@@ -10,7 +10,7 @@ import type { ZoneProps } from './zone'
 import { ancestors, EMPTY, empty, emptyMark, isLoaded, merge, type Row, visible } from './tree'
 import { type ApiFolder, type ApiItem, folderTree, inOneLake, itemUrl, modelOf, parseChildren, parseOneLake, parseWorkspaces, PLACEHOLDER, typeLabel } from './fabric'
 import { FAB_TONE, type FabKind, fabCalls, fabGuids, fabKind, fabPositionals, fabWorkspaces, type Invocation, invocations, join, modelFromConnection, posix, queryOf, targetLabel, tokenize, useDrives } from './parse'
-import { fabTouched } from './touch'
+import { fabTouched, nodeAtPath } from './touch'
 import { COPY, REFRESH, runFailure, setupOf, setupRows, spawnFailure } from './setup'
 
 const STATE = { plugin: 'fabric-cli', key: 'explorer' } as const
@@ -971,8 +971,7 @@ async function reveal($: EngineInterface, workspace: string, focus = false): Pro
 async function revealPath($: EngineInterface, path: string): Promise<void> {
   const segs = path.replace(/^\//, '').replace(/\/$/, '').split('/')
   for (let i = 2; i < segs.length; i++) {
-    const want = segs.slice(0, i).join('/').toLowerCase()
-    const n = (await get($)).nodes.find(x => x.path.toLowerCase() === want)
+    const n = nodeAtPath((await get($)).nodes, segs.slice(0, i).join('/'))
     if (!n) return
     await expandFabric($, n)
   }
@@ -1283,13 +1282,19 @@ async function afterFab($: EngineInterface, calls: Invocation[], stale: Set<stri
     for (const a of fabPositionals(inv.args.slice(1))) {
       const segs = a.replace(/^\/+|\/+$/g, '').split('/')
       for (let i = 2; i < segs.length; i++) {
-        const want = segs.slice(0, i).join('/').toLowerCase()
-        const n = prior.nodes.find(x => x.path.toLowerCase() === want)
+        const n = nodeAtPath(prior.nodes, segs.slice(0, i).join('/'))
         if (n && isLoaded(prior.nodes, n.id)) folders.add(n.id)
       }
     }
   }
   await pool([...folders], id => reloadNode($, id))
+  const guids = calls.flatMap(fabGuids)
+  if (guids.length) {
+    const cur = await get($)
+    const spaces = byGuid(guids, cur.nodes).flatMap(id => cur.nodes.filter(n => n.id === id && n.kind === 'workspace'))
+    const edited = calls.some(inv => fabGuids(inv).length && fabKind(inv) !== 'read' && fabKind(inv) !== 'download')
+    await pool(spaces, w => (edited && isLoaded(cur.nodes, w.id) ? reloadWorkspace($, w.name) : isLoaded(cur.nodes, w.id) ? Promise.resolve() : expandFabric($, w, true).then(() => undefined)))
+  }
   for (const a of lower(calls.flatMap(inv => inv.args.slice(1).filter(x => /\.Workspace\//i.test(x))))) await revealPath($, a)
   if (!succeeded) return
   const fresh = await get($)
@@ -1299,6 +1304,11 @@ async function afterFab($: EngineInterface, calls: Invocation[], stale: Set<stri
     const opened = touched.length ? fabWorkspaces(inv).map(w => wsId(fresh.nodes, w)).filter(id => !before.has(id)) : []
     lit.touched.push(...touched)
     lit.opened.push(...opened)
+    const hit = byGuid(fabGuids(inv), fresh.nodes)
+    const spaces = new Set(fresh.nodes.filter(n => n.kind === 'workspace' && hit.includes(n.id)).map(n => n.id))
+    const items = hit.filter(id => !spaces.has(id))
+    lit.touched.push(...(items.length ? items : [...spaces]))
+    if (items.length) lit.opened.push(...[...spaces].filter(id => !before.has(id)))
   }
   await flash($, lit.touched, lit.opened)
 }
@@ -1306,7 +1316,8 @@ async function afterFab($: EngineInterface, calls: Invocation[], stale: Set<stri
 function byGuid(guids: string[], nodes: TreeNode[]): string[] {
   if (guids.length === 0) return []
   const want = new Set(guids)
-  return nodes.filter(n => (n.sig && want.has(n.sig.toLowerCase())) || [...want].some(g => (n.url ?? '').toLowerCase().includes(g))).map(n => n.id)
+  const own = (n: TreeNode) => (n.kind === 'fabric folder' ? (n.sig.split('/').pop() ?? '') : n.sig).toLowerCase()
+  return nodes.filter(n => (n.sig && want.has(own(n))) || [...want].some(g => (n.url ?? '').toLowerCase().includes(g))).map(n => n.id)
 }
 
 const SQL_KINDS = new Set(['Lakehouse', 'Warehouse', 'SQLEndpoint', 'SQLDatabase', 'MirroredDatabase'])
@@ -1584,8 +1595,8 @@ export const register: Register = (on, options) => {
     const dimSet = new Set(work ? ex.flashDim : [])
     const width = Math.max(20, e.props.bodyColumns)
     const rows = treeRows(ex)
-    const detailRows = ex.detail.length ? Math.min(ex.detail.length, DETAIL_ROWS) + 3 : 0
-    const room = Math.max(5, Math.min(WINDOW, (e.props.scroll?.bodyRows ?? 40) - 4 - detailRows))
+    const detailRows = ex.detail.length ? Math.min(ex.detail.length, DETAIL_ROWS) + 4 : 0
+    const room = Math.max(5, Math.min(WINDOW, (e.props.scroll?.bodyRows ?? 40) - 4 - detailRows - (pending ? 1 : 0)))
     const focusId = follow && work && ex.flash.length ? (ex.flash[ex.flash.length - 1] ?? ex.cursor) : ex.cursor
     const at = Math.max(0, rows.findIndex(r => r.node.id === focusId))
     const isLit = (id: string) => brightSet.has(id) || dimSet.has(id)

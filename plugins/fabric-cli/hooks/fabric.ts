@@ -127,7 +127,7 @@ export function folderTree(items: ApiItem[], folders: ApiFolder[], parent: TreeN
     for (const i of here) {
       const name = `${i.displayName}.${i.type}`
       const id = `${at.id}/${name}`
-      const kid = { ...node(id, at.id, i.type!, i.displayName!, `${at.path}/${name}`, itemUrl(wsId, i.type!, i.id!)), note: typeLabel(i.type!) }
+      const kid = { ...node(id, at.id, i.type!, i.displayName!, `${at.path}/${name}`, itemUrl(wsId, i.type!, i.id!)), sig: i.id!.toLowerCase(), note: typeLabel(i.type!) }
       out.push(kid)
       if (ONELAKE_ITEMS.has(i.type!)) out.push(stub(id))
     }
