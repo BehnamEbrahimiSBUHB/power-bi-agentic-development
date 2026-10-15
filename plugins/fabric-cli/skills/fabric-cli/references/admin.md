@@ -6,7 +6,7 @@ Guide for Fabric/Power BI admin-level API operations using `fab`. These APIs req
 
 For more info use:
 - `mslearn search` or `mslearn fetch`
-- Microsoft Learn MCP server (`microsoft_docs_search`, `microsoft_docs_fetch`)
+- https://learn.microsoft.com/rest/api/fabric/admin/
 
 ## Prerequisites
 
