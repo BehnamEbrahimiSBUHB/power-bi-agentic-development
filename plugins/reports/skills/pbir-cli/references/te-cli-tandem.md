@@ -28,8 +28,8 @@ te mv "'Actuals'[Actuals MTD]" "'Actuals'[Sales MTD]" --save
 te validate --errors-only
 te bpa run --fail-on error
 
-pbir fields replace "Sales Flash Report.Report" --from "Actuals.Actuals MTD" --to "Actuals.Sales MTD" --dry-run
-pbir fields replace "Sales Flash Report.Report" --from "Actuals.Actuals MTD" --to "Actuals.Sales MTD"
+pbir fields replace "Sales Flash Report.Report" --from "Actuals.Actuals MTD.Measure" --to "Actuals.Sales MTD.Measure" --dry-run
+pbir fields replace "Sales Flash Report.Report" --from "Actuals.Actuals MTD.Measure" --to "Actuals.Sales MTD.Measure"
 pbir validate "Sales Flash Report.Report" --fields
 pbir desktop refresh "Sales Flash Report.Report"
 ```
@@ -57,8 +57,8 @@ Moving changes the report-visible identity even when the measure name stays the 
 ```bash
 te mv "'Actuals'[Margin]" "'_Measures'[Margin]" --save -s "Workspace" -d "Model"
 te validate --errors-only -s "Workspace" -d "Model"
-pbir fields replace "Report.Report" --from "Actuals.Margin" --to "_Measures.Margin" --dry-run
-pbir fields replace "Report.Report" --from "Actuals.Margin" --to "_Measures.Margin"
+pbir fields replace "Report.Report" --from "Actuals.Margin.Measure" --to "_Measures.Margin.Measure" --dry-run
+pbir fields replace "Report.Report" --from "Actuals.Margin.Measure" --to "_Measures.Margin.Measure"
 pbir validate "Report.Report" --fields
 ```
 
@@ -77,7 +77,7 @@ te bpa run --fail-on error -s "Workspace" -d "Model"
 
 pbir model "Report.Report" -d -t _Measures
 pbir visuals bind "Report.Report/Page.Page/Chart.Visual" \
-  --add "Y:_Measures.Margin %" --type Measure
+  --add "Y:_Measures.Margin %.Measure"
 pbir validate "Report.Report" --fields
 ```
 
@@ -111,9 +111,9 @@ Clean report references while the field still exists, then delete it from the mo
 te deps "'Sales'[Legacy Region]" --downstream -s "Workspace" -d "Model"
 pbir fields find "Sales.Legacy Region" "Report.Report" --threshold 1.0
 pbir visuals bind "Report.Report/Page.Page/Chart.Visual" \
-  --remove "Category:Sales.Legacy Region" --type Column --dry-run
+  --remove "Category:Sales.Legacy Region" --dry-run
 pbir visuals bind "Report.Report/Page.Page/Chart.Visual" \
-  --remove "Category:Sales.Legacy Region" --type Column
+  --remove "Category:Sales.Legacy Region"
 pbir validate "Report.Report" --fields
 
 te rm "'Sales'[Legacy Region]" --save -s "Workspace" -d "Model"

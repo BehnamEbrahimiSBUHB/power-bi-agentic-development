@@ -38,7 +38,7 @@ pbir visuals reference-line add "Test.Report/P.Page/scatterChart_A.Visual" --val
 
 Flags:
 
-- `--value <literal-or-measure>` ... required. A finite number (literal) or a bound `Table.Measure` reference. If the value contains a dot, the command tries to resolve it as a measure first; only if resolution fails does it fall back to literal parsing. This prevents silent misinterpretation of measure names that look like numbers.
+- `--value <literal-or-measure>` ... required. A finite number (literal) or a bound typed `Table.Measure.Measure` reference. If the value contains a dot, the command tries to resolve it as a measure first; only if resolution fails does it fall back to literal parsing. This prevents silent misinterpretation of measure names that look like numbers.
 - `--axis y|x` ... defaults to `y`. `y` writes to `y1AxisReferenceLine` (horizontal line); `x` writes to `xAxisReferenceLine` (vertical line).
 
 Output:

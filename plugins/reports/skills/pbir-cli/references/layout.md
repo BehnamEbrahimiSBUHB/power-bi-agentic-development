@@ -138,13 +138,13 @@ pbir add title "Report.Report/Page.Page" "Sales Dashboard"
 
 # KPI row (4 cards, equal width)
 pbir add visual cardVisual "Page.Page" --title "Revenue" \
-  -d "Data:Sales.Revenue" --x 24 --y 88 --width 296 --height 140
+  -d "Data:Sales.Revenue.Measure" --x 24 --y 88 --width 296 --height 140
 pbir add visual cardVisual "Page.Page" --title "Orders" \
-  -d "Data:Sales.OrderCount" --x 336 --y 88 --width 296 --height 140
+  -d "Data:Sales.OrderCount.Measure" --x 336 --y 88 --width 296 --height 140
 pbir add visual cardVisual "Page.Page" --title "Margin" \
-  -d "Data:Sales.Margin" --x 648 --y 88 --width 296 --height 140
+  -d "Data:Sales.Margin.Measure" --x 648 --y 88 --width 296 --height 140
 pbir add visual cardVisual "Page.Page" --title "Customers" \
-  -d "Data:Sales.CustomerCount" --x 960 --y 88 --width 296 --height 140
+  -d "Data:Sales.CustomerCount.Measure" --x 960 --y 88 --width 296 --height 140
 
 # Two charts side-by-side
 pbir add visual lineChart "Page.Page" --title "Revenue Trend" \

@@ -104,15 +104,15 @@ Every field binding in Power BI has a type -- Column, Measure, or Hierarchy. The
 
 ### How to Specify Field Type
 
-**CLI (`pbir visuals bind`)**: Use the `-t` flag:
+**CLI**: every field argument is a typed reference, `Table.Field.Measure`, `Table.Field.Column` or `Table.Field.Hierarchy`; the suffix carries the kind. An untyped reference is refused with the corrected form, and `pbir model "Report.Report" -d` lists the typed references to copy. For `pbir visuals bind`:
 ```bash
-pbir visuals bind "Visual.Visual" -a "Values:Sales.Revenue" -t Measure
-pbir visuals bind "Visual.Visual" -a "Category:Date.Month" -t Column
+pbir visuals bind "Visual.Visual" -a "Values:Sales.Revenue.Measure"
+pbir visuals bind "Visual.Visual" -a "Category:Date.Month.Column"
 ```
 
-**CLI (`pbir add visual`)**: The `-d` flag auto-detects type from the model when possible. If the model is unavailable, explicitly specify with `-t`:
+**CLI (`pbir add visual`)**: the `-d` flag takes the same typed reference:
 ```bash
-pbir add visual card "Page.Page" -d "Values:Sales.Revenue"
+pbir add visual card "Page.Page" -d "Values:Sales.Revenue.Measure"
 ```
 
 **Python object model (`Field()`)**: Set `kind` parameter:
@@ -132,7 +132,7 @@ To fix a field bound as the wrong type, clear the role and re-add with the corre
 ```bash
 # Fix: change Column to Measure
 pbir visuals bind "Visual.Visual" -c "Values"
-pbir visuals bind "Visual.Visual" -a "Values:Sales.Revenue" -t Measure
+pbir visuals bind "Visual.Visual" -a "Values:Sales.Revenue.Measure"
 
 # Verify
 pbir visuals bind "Visual.Visual" --show
@@ -145,10 +145,10 @@ Do NOT attempt to fix field types by editing the visual JSON directly. Use `pbir
 ### During Creation
 
 ```bash
-# Bind fields at creation time with -d flag (role:Table.Field)
-pbir add visual card "Page.Page" --title "Revenue" -d "Values:Sales.Revenue"
+# Bind fields at creation time with -d flag (role:typed reference)
+pbir add visual card "Page.Page" --title "Revenue" -d "Values:Sales.Revenue.Measure"
 pbir add visual lineChart "Page.Page" --title "Trend" \
-  -d "Category:Date.Month" -d "Y:Sales.Revenue"
+  -d "Category:Date.Month.Column" -d "Y:Sales.Revenue.Measure"
 ```
 
 ### After Creation
@@ -161,9 +161,9 @@ pbir visuals bind "Report.Report/Page.Page/Visual.Visual" --show
 pbir visuals bind "Report.Report/Page.Page/Visual.Visual" --list-roles
 
 # Add a field to a role
-pbir visuals bind "Visual.Visual" -a "Category:Date.Month"
-pbir visuals bind "Visual.Visual" -a "Y:Sales.Revenue" -t Measure
-pbir visuals bind "Visual.Visual" -a "Legend:Products.Category" -t Column
+pbir visuals bind "Visual.Visual" -a "Category:Date.Month.Column"
+pbir visuals bind "Visual.Visual" -a "Y:Sales.Revenue.Measure"
+pbir visuals bind "Visual.Visual" -a "Legend:Products.Category.Column"
 
 # Remove a field from a role
 pbir visuals bind "Visual.Visual" -r "Y:Sales.Revenue"
@@ -176,10 +176,9 @@ pbir visuals bind "Visual.Visual" -c "Legend"
 
 | Flag | Purpose |
 |------|---------|
-| `-a` / `--add` | Add field binding (`Role:Table.Field`) |
-| `-r` / `--remove` | Remove field binding (`Role:Table.Field`) |
+| `-a` / `--add` | Add field binding (`Role:Table.Field.Measure` or `Role:Table.Field.Column`) |
+| `-r` / `--remove` | Remove field binding (`Role:Table.Field` query ref) |
 | `-c` / `--clear` | Clear all fields from a role |
-| `-t` / `--type` | Field type: `Column` or `Measure` |
 | `-l` / `--list-roles` | Show available data roles for the visual type |
 | `-s` / `--show` | Show current bindings |
 
@@ -210,13 +209,13 @@ Replace every occurrence of one field with another. Useful when renaming model c
 
 ```bash
 # Dry run first -- see what would change
-pbir fields replace "Report.Report" --from "Sales.Revenue" --to "Sales.NetRevenue" --dry-run
+pbir fields replace "Report.Report" --from "Sales.Revenue.Measure" --to "Sales.NetRevenue.Measure" --dry-run
 
 # Apply the replacement
-pbir fields replace "Report.Report" --from "Sales.Revenue" --to "Sales.NetRevenue"
+pbir fields replace "Report.Report" --from "Sales.Revenue.Measure" --to "Sales.NetRevenue.Measure"
 
 # Skip validation (if model not available locally)
-pbir fields replace "Report.Report" --from "Sales.Revenue" --to "Sales.NetRevenue" --skip-validation
+pbir fields replace "Report.Report" --from "Sales.Revenue.Measure" --to "Sales.NetRevenue.Measure" --skip-validation
 ```
 
 ### Add a Field to Specific Visuals
@@ -224,11 +223,11 @@ pbir fields replace "Report.Report" --from "Sales.Revenue" --to "Sales.NetRevenu
 ```bash
 # Add field to a specific visual's bucket
 pbir fields add "Report.Report/Page.Page/Visual.Visual" \
-  -f "Sales.Revenue" -b "Y" -t Measure
+  -f "Sales.Revenue.Measure" -b "Y"
 
 # Dry run
 pbir fields add "Report.Report/Page.Page/Visual.Visual" \
-  -f "Sales.Revenue" -b "Y" -t Measure --dry-run
+  -f "Sales.Revenue.Measure" -b "Y" --dry-run
 ```
 
 ### Rename Fields
@@ -291,8 +290,8 @@ After rebinding to a model with different field names, use `pbir fields replace`
 pbir validate "Report.Report"
 
 # Replace old field references with new ones
-pbir fields replace "Report.Report" --from "OldTable.OldColumn" --to "NewTable.NewColumn"
-pbir fields replace "Report.Report" --from "OldTable.OldMeasure" --to "NewTable.NewMeasure"
+pbir fields replace "Report.Report" --from "OldTable.OldColumn.Column" --to "NewTable.NewColumn.Column"
+pbir fields replace "Report.Report" --from "OldTable.OldMeasure.Measure" --to "NewTable.NewMeasure.Measure"
 ```
 
 ## Recommended Workflow: Rebinding
@@ -307,7 +306,7 @@ pbir fields replace "Report.Report" --from "OldTable.OldMeasure" --to "NewTable.
 ## Recommended Workflow: Swapping Fields
 
 1. **Discover**: `pbir fields find "Table.OldField" "Report.Report"` to see all usages
-2. **Dry run**: `pbir fields replace "Report.Report" --from "Table.OldField" --to "Table.NewField" --dry-run`
+2. **Dry run**: `pbir fields replace "Report.Report" --from "Table.OldField.Column" --to "Table.NewField.Column" --dry-run`
 3. **Apply**: Remove `--dry-run` to execute
 4. **Validate**: `pbir validate "Report.Report"`
 

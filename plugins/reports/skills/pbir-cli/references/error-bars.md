@@ -33,29 +33,29 @@ This split exists because `pbir set` cannot array-append into a container, canno
 ```bash
 # Bullet marker: upper and lower both point at a target measure
 pbir visuals error-bars add "Test.Report/P.Page/barChart_Revenue.Visual" \
-  --series "Sales.Revenue" \
-  --upper "Sales.Target" \
-  --lower "Sales.Target"
+  --series "Sales.Revenue.Measure" \
+  --upper "Sales.Target.Measure" \
+  --lower "Sales.Target.Measure"
 
 # Confidence band: different upper and lower
 pbir visuals error-bars add "Test.Report/P.Page/columnChart_Forecast.Visual" \
-  --series "Sales.Forecast" \
-  --upper "Sales.Forecast Upper" \
-  --lower "Sales.Forecast Lower"
+  --series "Sales.Forecast.Measure" \
+  --upper "Sales.Forecast Upper.Measure" \
+  --lower "Sales.Forecast Lower.Measure"
 
 # Relative bounds (percentage offsets from the series value)
 pbir visuals error-bars add "Test.Report/P.Page/lineChart_KPI.Visual" \
-  --series "Sales.Revenue" \
-  --upper "Sales.Revenue Upper Pct" \
-  --lower "Sales.Revenue Lower Pct" \
+  --series "Sales.Revenue.Measure" \
+  --upper "Sales.Revenue Upper Pct.Measure" \
+  --lower "Sales.Revenue Lower Pct.Measure" \
   --relative
 ```
 
 Flags:
 
-- `--series <Table.Measure>` ... required. The series to attach error bars to. Must be bound to a role on the visual; otherwise the command errors with "Field '...' is not bound to this visual".
-- `--upper <Table.Measure>` ... required. Upper-bound measure reference.
-- `--lower <Table.Measure>` ... optional; defaults to the upper bound. Useful for bullet markers where a single target becomes both bounds.
+- `--series <Table.Measure.Measure>` ... required. The series to attach error bars to. Must be bound to a role on the visual; otherwise the command errors with "Field '...' is not bound to this visual".
+- `--upper <Table.Measure.Measure>` ... required. Upper-bound measure reference.
+- `--lower <Table.Measure.Measure>` ... optional; defaults to the upper bound. Useful for bullet markers where a single target becomes both bounds.
 - `--relative` ... treats bounds as percentage offsets from the series value instead of absolute values.
 
 **Upsert semantics.** Calling `add` for the same `--series` twice replaces both entries rather than appending. This is deliberate: error-bars-per-series is a logical singleton in Power BI. Rerunning the command with different bounds updates the binding without duplicating entries.
@@ -69,7 +69,7 @@ Chaining example:
 
 ```bash
 QR=$(pbir visuals error-bars add "V.Visual" \
-  --series "Sales.Revenue" --upper "Sales.Target" --lower "Sales.Target")
+  --series "Sales.Revenue.Measure" --upper "Sales.Target.Measure" --lower "Sales.Target.Measure")
 pbir set "V.Visual.error.field($QR).markerShape" --value "diamond"
 pbir set "V.Visual.error.field($QR).markerSize" --value 10
 pbir set "V.Visual.error.field($QR).barShow" --value false
@@ -113,7 +113,7 @@ Static values cover most cases, but the styling properties also accept a measure
 
 ```bash
 # Colour the whiskers by a formatting measure
-pbir visuals cf "V.Visual" --measure "error.barColor _Fmt.VarianceColor" \
+pbir visuals cf "V.Visual" --measure "error.barColor _Fmt.VarianceColor.Measure" \
   --target-field "Sales.Revenue"
 
 # Rules-driven marker size
@@ -163,9 +163,9 @@ Earlier iterations of this command accepted `--bar-width`, `--bar-color`, `--mar
 
 ```bash
 QR=$(pbir visuals error-bars add "V.Visual" \
-  --series "Sales.Revenue" \
-  --upper "Sales.Target" \
-  --lower "Sales.Target")
+  --series "Sales.Revenue.Measure" \
+  --upper "Sales.Target.Measure" \
+  --lower "Sales.Target.Measure")
 pbir set "V.Visual.error.field($QR).markerShape" --value "longDash"
 pbir set "V.Visual.error.field($QR).markerSize" --value 12
 pbir set "V.Visual.error.field($QR).barShow" --value false
@@ -175,9 +175,9 @@ pbir set "V.Visual.error.field($QR).barShow" --value false
 
 ```bash
 QR=$(pbir visuals error-bars add "V.Visual" \
-  --series "Sales.Forecast" \
-  --upper "Sales.Forecast High" \
-  --lower "Sales.Forecast Low")
+  --series "Sales.Forecast.Measure" \
+  --upper "Sales.Forecast High.Measure" \
+  --lower "Sales.Forecast Low.Measure")
 pbir set "V.Visual.error.field($QR).barWidth" --value 2
 pbir set "V.Visual.error.field($QR).markerSize" --value 0
 ```
@@ -186,9 +186,9 @@ pbir set "V.Visual.error.field($QR).markerSize" --value 0
 
 ```bash
 QR=$(pbir visuals error-bars add "V.Visual" \
-  --series "Sales.Revenue" \
-  --upper "Sales.Max" \
-  --lower "Sales.Min")
+  --series "Sales.Revenue.Measure" \
+  --upper "Sales.Max.Measure" \
+  --lower "Sales.Min.Measure")
 pbir set "V.Visual.error.field($QR).labelShow" --value true
 pbir set "V.Visual.error.field($QR).labelFormat" --value "range"
 ```
@@ -200,7 +200,7 @@ pbir set "V.Visual.error.field($QR).labelFormat" --value "range"
 - **A measure created moments ago fails `--upper`/`--series` validation** with "Field not found" until the model snapshot refreshes; any `pbir model -d` call against the report refreshes the cache.
 - **`error-bars add` is idempotent per series** via the upsert in point 1 above. Retrying a failed add with the same `--series` replaces the existing pair cleanly; no duplication. Retries against different series accumulate as separate pairs, which is the intended behavior.
 - **Glob + shell capture don't mix.** When `visual_path` matches multiple visuals, `add` prints one queryRef per visual to stdout; `QR=$(pbir visuals error-bars add "**/*.Visual" ...)` captures multiple lines. Target one visual at a time when chaining to `pbir set`.
-- **`--series` must be bound first.** `pbir visuals bind --add "Role:Table.Measure" --type Measure` before calling `error-bars add`. The command looks the queryRef up from the visual's `queryState.projections`; if the series is not bound, it raises a clear error pointing at `pbir visuals bind` instead of silently writing invalid JSON. Implicit measures (a column dropped on Y without an explicit Sum/Avg wrapper) are supported through queryRef equality matching.
+- **`--series` must be bound first.** `pbir visuals bind --add "Role:Table.Measure.Measure"` before calling `error-bars add`. The command looks the queryRef up from the visual's `queryState.projections`; if the series is not bound, it raises a clear error pointing at `pbir visuals bind` instead of silently writing invalid JSON. Implicit measures (a column dropped on Y without an explicit Sum/Avg wrapper) are supported through queryRef equality matching.
 - **Range bounds are not reachable via `pbir set`.** The range-binding entry uses a compound selector that `pbir set`'s `field()` form does not match. To change the upper or lower bound measures after creation, rerun `error-bars add` with the new values; the upsert will replace the range entry.
 - **Confidence bands on line charts.** The `error` container does not render a filled band between bounds. For true shaded confidence bands use `shadedRegion` (line and area charts) or reference-line `shadeColor`/`shadeShow`. Error bars render whiskers, caps, markers, and labels; they do not fill.
 - **Bullet charts** are just a specific combination of flags: whisker hidden (`barShow=false`), a dash marker (`markerShape=longDash`), and upper equal to lower (a single target measure used for both bounds). See the plugin's bullet-chart example JSON `examples/visuals/formatted/barChart-bullet.json` for the full structure.

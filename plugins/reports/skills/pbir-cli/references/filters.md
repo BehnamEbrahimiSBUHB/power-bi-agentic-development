@@ -7,9 +7,9 @@ Complete guide to creating, managing, and removing filters at report, page, and 
 ### Categorical (default)
 
 ```bash
-pbir add filter Date "Calendar Year (ie 2021)" -r "Report.Report"
-pbir add filter Products Category -p "Report.Report/Page.Page" --values Electronics --values Clothing
-pbir add filter Sales Region -v "Report.Report/Page.Page/Visual.Visual"
+pbir add filter "Date.Calendar Year (ie 2021).Column" -r "Report.Report"
+pbir add filter "Products.Category.Column" -p "Report.Report/Page.Page" --values Electronics --values Clothing
+pbir add filter "Sales.Region.Column" -v "Report.Report/Page.Page/Visual.Visual"
 ```
 
 ### TopN
@@ -17,15 +17,15 @@ pbir add filter Sales Region -v "Report.Report/Page.Page/Visual.Visual"
 Show top/bottom N items ranked by a measure or column:
 
 ```bash
-pbir add filter Brands Brand -r "Report.Report" \
-  --type TopN --n 10 --by-table Invoices --by-field "Net Invoice Value"
+pbir add filter "Brands.Brand.Column" -r "Report.Report" \
+  --type TopN --n 10 --by "Invoices.Net Invoice Value.Measure"
 
 # Bottom 5
-pbir add filter Brands Brand -r "Report.Report" \
-  --type TopN --n 5 --by-table Invoices --by-field "Net Invoice Value" --direction Bottom
+pbir add filter "Brands.Brand.Column" -r "Report.Report" \
+  --type TopN --n 5 --by "Invoices.Net Invoice Value.Measure" --direction Bottom
 ```
 
-Required flags: `--n`, `--by-table`, `--by-field`. Optional: `--direction` (Top/Bottom, default Top).
+Required flags: `--n`, `--by` (typed ranking field). Optional: `--direction` (Top/Bottom, default Top).
 
 ### Advanced
 
@@ -33,15 +33,15 @@ Custom operator-based filters:
 
 ```bash
 # Greater than
-pbir add filter Invoices "Net Invoice Value" -r "Report.Report" \
+pbir add filter "Invoices.Net Invoice Value.Measure" -v "Report.Report/Page.Page/Visual.Visual" \
   --type Advanced --operator GreaterThan --values 1000
 
 # In list
-pbir add filter Brands Brand -r "Report.Report" \
+pbir add filter "Brands.Brand.Column" -r "Report.Report" \
   --type Advanced --operator In --values BrandA --values BrandB
 
 # Less than or equal
-pbir add filter Invoices "Net Invoice Value" -r "Report.Report" \
+pbir add filter "Invoices.Net Invoice Value.Measure" -v "Report.Report/Page.Page/Visual.Visual" \
   --type Advanced --operator LessThanOrEqual --values 5000
 ```
 
@@ -52,7 +52,7 @@ Operators: `In`, `NotIn`, `GreaterThan`, `GreaterThanOrEqual`, `LessThan`, `Less
 Filter by relative date periods:
 
 ```bash
-pbir add filter Date Date -r "Report.Report" --type RelativeDate --period Last30Days
+pbir add filter "Date.Date.Column" -r "Report.Report" --type RelativeDate --period Last30Days
 ```
 
 Periods: `Last7Days`, `Last14Days`, `Last30Days`, `Last3Months`, `Last6Months`, `Last12Months`, `LastYear`.
@@ -82,8 +82,8 @@ Filter type cannot be changed in place because each type has a different JSON st
 
 ```bash
 pbir rm "Report.Report/filter:Brand" -f                   # rm uses filter: prefix
-pbir add filter Brands Brand -r "Report.Report" --type TopN --n 10 \
-  --by-table Invoices --by-field "Net Invoice Value"
+pbir add filter "Brands.Brand.Column" -r "Report.Report" --type TopN --n 10 \
+  --by "Invoices.Net Invoice Value.Measure"
 ```
 
 ## Filter Pane Styling

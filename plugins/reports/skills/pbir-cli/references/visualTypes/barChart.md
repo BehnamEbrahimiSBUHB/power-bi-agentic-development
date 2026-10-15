@@ -15,7 +15,7 @@ This guidance applies equally to `columnChart` (vertical bars). The only differe
 
 ```bash
 pbir add visual barChart "Report.Report/Page.Page" --title "Revenue by Region" \
-  -d "Category:Geography.Region" -d "Y:Sales.Revenue" \
+  -d "Category:Geography.Region.Column" -d "Y:Sales.Revenue.Measure" \
   --x 24 --y 120 --width 608 --height 400
 
 pbir visuals sort "Visual.Visual" -f "Sales.Revenue" -d Descending
@@ -62,21 +62,21 @@ pbir dax measures add "Report.Report" -t _Fmt -n "VarianceColor" \
   -e "IF([Variance] < 0, \"bad\", \"neutral\")" --data-type Text
 
 # Apply to bar fill
-pbir visuals cf "Visual.Visual" --measure "dataPoint.fill _Fmt.VarianceColor"
+pbir visuals cf "Visual.Visual" --measure "dataPoint.fill _Fmt.VarianceColor.Measure"
 ```
 
 6. **Limit categories to 5-10.** Beyond that, bars become thin and unreadable. Use Top N filters or group smaller categories into "Other"
 
 ```bash
-pbir add filter Geography Region -v "Visual.Visual" --type TopN --n 10 \
-  --by-table Sales --by-field Revenue
+pbir add filter "Geography.Region.Column" -v "Visual.Visual" --type TopN --n 10 \
+  --by "Sales.Revenue.Measure"
 ```
 
 7. **Bullet chart pattern for target comparison.** Overlay a target/comparison value as an error-bar marker on each bar. Use `pbir visuals error-bars add` to create the range binding, passing the same target measure as both bounds, then style the generated entry with `pbir set`. Never edit `visual.json` directly. See `references/error-bars.md` for the full workflow
 
 ```bash
 QR=$(pbir visuals error-bars add "Visual.Visual" \
-  --series "Sales.Revenue" --upper "Sales.Target" --lower "Sales.Target")
+  --series "Sales.Revenue.Measure" --upper "Sales.Target.Measure" --lower "Sales.Target.Measure")
 pbir set "Visual.Visual.error.field($QR).markerShape" --value "longDash"
 pbir set "Visual.Visual.error.field($QR).markerSize" --value 12
 pbir set "Visual.Visual.error.field($QR).barShow" --value false
@@ -92,10 +92,10 @@ pbir visuals legend "Visual.Visual" --no-show
 
 ```bash
 # Pin value axis floor to zero
-pbir visuals cf "Visual.Visual" --measure "valueAxis.start _Fmt.Zero"
+pbir visuals cf "Visual.Visual" --measure "valueAxis.start _Fmt.Zero.Measure"
 
 # Dynamic ceiling
-pbir visuals cf "Visual.Visual" --measure "valueAxis.end _Fmt.AxisCeiling"
+pbir visuals cf "Visual.Visual" --measure "valueAxis.end _Fmt.AxisCeiling.Measure"
 ```
 
 ## Examples

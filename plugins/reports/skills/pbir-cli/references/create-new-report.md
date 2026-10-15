@@ -152,18 +152,18 @@ Similarly, hide axis titles when the axis label is self-evident from context (e.
 # KPI visuals with targets and trend lines (y=88, h=160)
 # 3 KPIs: each w=400, gaps: 24 + 400 + 16 + 400 + 16 + 400 + 24 = 1280
 pbir add visual kpi "Sales.Report/Overview.Page" --title "Revenue" \
-  -d "Indicator:Invoices.Turnover" -d "Goal:Invoices.Turnover 1YP" \
-  -d "TrendLine:Date.Calendar Month (ie Jan)" \
+  -d "Indicator:Invoices.Turnover.Measure" -d "Goal:Invoices.Turnover 1YP.Measure" \
+  -d "TrendLine:Date.Calendar Month (ie Jan).Column" \
   --x 24 --y 88 --width 400 --height 160
 
 pbir add visual kpi "Sales.Report/Overview.Page" --title "Order Lines" \
-  -d "Indicator:Orders.Order Lines" -d "Goal:Orders.Order Lines 1YP" \
-  -d "TrendLine:Date.Calendar Month (ie Jan)" \
+  -d "Indicator:Orders.Order Lines.Measure" -d "Goal:Orders.Order Lines 1YP.Measure" \
+  -d "TrendLine:Date.Calendar Month (ie Jan).Column" \
   --x 440 --y 88 --width 400 --height 160
 
 pbir add visual kpi "Sales.Report/Overview.Page" --title "Margin %" \
-  -d "Indicator:Invoices.Selling Margin (%)" -d "Goal:Invoices.Selling Margin (%) 1YP" \
-  -d "TrendLine:Date.Calendar Month (ie Jan)" \
+  -d "Indicator:Invoices.Selling Margin (%).Measure" -d "Goal:Invoices.Selling Margin (%) 1YP.Measure" \
+  -d "TrendLine:Date.Calendar Month (ie Jan).Column" \
   --x 856 --y 88 --width 400 --height 160
 
 # Trend chart (left, y=264, h=220)
@@ -171,11 +171,11 @@ pbir add visual lineChart "Sales.Report/Overview.Page" --title "Monthly Trend" \
   --x 24 --y 264 --width 608 --height 220
 
 pbir visuals bind "Sales.Report/Overview.Page/Monthly Trend.Visual" \
-  -a "Category:Date.Calendar Month (ie Jan)" -a "Y:Invoices.Turnover"
+  -a "Category:Date.Calendar Month (ie Jan).Column" -a "Y:Invoices.Turnover.Measure"
 
 # Breakdown chart (right, y=264, h=220)
 pbir add visual barChart "Sales.Report/Overview.Page" --title "by Region" \
-  -d "Category:Regions.Territory" -d "Y:Invoices.Turnover" \
+  -d "Category:Regions.Territory.Column" -d "Y:Invoices.Turnover.Measure" \
   --x 648 --y 264 --width 608 --height 220
 
 # Detail table (full width, y=500, h=196)
@@ -183,8 +183,8 @@ pbir add visual tableEx "Sales.Report/Overview.Page" --title "Detail by Account"
   --x 24 --y 500 --width 1232 --height 196
 
 pbir visuals bind "Sales.Report/Overview.Page/Detail by Account.Visual" \
-  -a "Values:Customers.Key Account Name" -a "Values:Products.Product Name" \
-  -a "Values:Invoices.Turnover" -a "Values:Orders.Order Lines"
+  -a "Values:Customers.Key Account Name.Column" -a "Values:Products.Product Name.Column" \
+  -a "Values:Invoices.Turnover.Measure" -a "Values:Orders.Order Lines.Measure"
 ```
 
 **Spacing verification** for the example above:
@@ -200,11 +200,11 @@ Left margin:   24.  Right edge: 24+1232=1256.  Right margin: 1280-1256 = 24  [ok
 
 ```bash
 # Report-level filters
-pbir add filter Date Year -r "Sales.Report" --values 2025
-pbir add filter Geography Region -r "Sales.Report"
+pbir add filter "Date.Year.Column" -r "Sales.Report" --values 2025
+pbir add filter "Geography.Region.Column" -r "Sales.Report"
 
 # Page-level filters
-pbir add filter Products Category -p "Sales.Report/Detail.Page"
+pbir add filter "Products.Category.Column" -p "Sales.Report/Detail.Page"
 ```
 
 ### 8. Format Visuals

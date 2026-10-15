@@ -15,10 +15,10 @@ This guidance applies equally to `areaChart` (line + shaded area beneath). All d
 
 ```bash
 pbir add visual lineChart "Report.Report/Page.Page" --title "Revenue Trend" \
-  -d "Category:Date.Month" -d "Y:Sales.Revenue" \
+  -d "Category:Date.Month.Column" -d "Y:Sales.Revenue.Measure" \
   --x 24 --y 120 --width 608 --height 300
 
-pbir visuals bind "Visual.Visual" -a "Y:Sales.Target" -t Measure
+pbir visuals bind "Visual.Visual" -a "Y:Sales.Target.Measure"
 pbir visuals sort "Visual.Visual" -f "Date.Month" -d Ascending
 ```
 
@@ -90,7 +90,7 @@ pbir dax measures add "Report.Report" -t _Fmt -n "Revenue Latest" \
   -d Double
 
 # Bind as additional series
-pbir visuals bind "Visual.Visual" -a "Y:_Fmt.Revenue Latest" -t Measure
+pbir visuals bind "Visual.Visual" -a "Y:_Fmt.Revenue Latest.Measure"
 
 # Enable marker and label only for latest-point series
 pbir set "Visual.Visual.lineStyles.field(_Fmt.Revenue Latest).showMarker" --value true
@@ -112,10 +112,10 @@ pbir visuals query "Visual.Visual" --execute
 
 ```bash
 # Pin Y-axis floor to zero
-pbir visuals cf "Visual.Visual" --measure "valueAxis.start _Fmt.Zero"
+pbir visuals cf "Visual.Visual" --measure "valueAxis.start _Fmt.Zero.Measure"
 
 # Dynamic ceiling at 120% of max
-pbir visuals cf "Visual.Visual" --measure "valueAxis.end _Fmt.AxisCeiling"
+pbir visuals cf "Visual.Visual" --measure "valueAxis.end _Fmt.AxisCeiling.Measure"
 ```
 
 ## Examples
