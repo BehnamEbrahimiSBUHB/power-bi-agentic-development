@@ -350,7 +350,7 @@ python scripts/bpa_rules_audit.py /path/to/model --quiet
 
 ### Fetching Docs
 
-To retrieve current BPA and TOM reference docs, use `mslearn search` + `mslearn fetch` (CLI) or browse https://learn.microsoft.com. Search based on the user's request and run multiple searches as needed to ensure sufficient context before proceeding.
+To retrieve current BPA and TOM reference docs, search https://learn.microsoft.com and fetch the relevant pages. Search based on the user's request and run multiple searches as needed to ensure sufficient context before proceeding.
 
 ### External References
 

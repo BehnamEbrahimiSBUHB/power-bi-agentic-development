@@ -549,7 +549,7 @@ For **report** (PBIR) files specifically, the Desktop Bridge reloads on-disk edi
 | **DAX Reference** | `dax.guide` |
 | **Compatibility Levels** | `learn.microsoft.com/en-us/analysis-services/tabular-models/compatibility-level-for-tabular-models-in-analysis-services` |
 
-To retrieve current TOM/ADOMD.NET reference docs, use `mslearn search` + `mslearn fetch` (CLI) or browse https://learn.microsoft.com. Search based on the user's request and run multiple searches as needed to ensure sufficient context before proceeding.
+To retrieve current TOM/ADOMD.NET reference docs, search https://learn.microsoft.com and fetch the relevant pages. Search based on the user's request and run multiple searches as needed to ensure sufficient context before proceeding.
 
 
 ## 11. Debugging DAX with EVALUATEANDLOG

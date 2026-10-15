@@ -156,7 +156,7 @@ A report must be connected to a semantic model. There are two ways to do this:
 
 ## References
 
-**Fetching Docs:** To retrieve current Power BI developer/report format docs, use `mslearn search` + `mslearn fetch` (CLI) or browse https://learn.microsoft.com. Search based on the user's request and run multiple searches as needed to ensure sufficient context before proceeding.
+**Fetching Docs:** To retrieve current Power BI developer/report format docs, search https://learn.microsoft.com and fetch the relevant pages. Search based on the user's request and run multiple searches as needed to ensure sufficient context before proceeding.
 
 **Examples:**
 - **`examples/K201-MonthSlicer.Report/`** -- Real PBIR report with 7 visual types (slicer, advancedSlicerVisual, kpi, lineChart, scatterChart, tableEx, textbox), extension measures, bookmarks, conditional formatting

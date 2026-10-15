@@ -433,7 +433,7 @@ For the complete property reference for every object type, see **`references/obj
 
 ### Fetching Docs
 
-To retrieve current TMDL reference docs, use `mslearn search` + `mslearn fetch` (CLI) or browse https://learn.microsoft.com. Search based on the user's request and run multiple searches as needed to ensure sufficient context before proceeding.
+To retrieve current TMDL reference docs, search https://learn.microsoft.com and fetch the relevant pages. Search based on the user's request and run multiple searches as needed to ensure sufficient context before proceeding.
 
 ### Example Model
 

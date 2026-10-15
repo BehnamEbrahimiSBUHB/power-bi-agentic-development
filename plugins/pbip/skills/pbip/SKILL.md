@@ -207,7 +207,7 @@ Common missed locations:
 **Rename operations:**
 - **`references/rename-cascade.md`** -- Detailed before/after examples for each rename cascade location (TMDL + report files)
 
-**Fetching Docs:** To retrieve current PBIP reference docs, use `mslearn search` + `mslearn fetch` (CLI) or browse https://learn.microsoft.com. Search based on the user's request and run multiple searches as needed to ensure sufficient context before proceeding.
+**Fetching Docs:** To retrieve current PBIP reference docs, search https://learn.microsoft.com and fetch the relevant pages. Search based on the user's request and run multiple searches as needed to ensure sufficient context before proceeding.
 
 **External references:**
 - [PBIP overview (Microsoft Learn)](https://learn.microsoft.com/en-us/power-bi/developer/projects/projects-overview)

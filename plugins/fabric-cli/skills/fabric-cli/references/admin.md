@@ -2,11 +2,9 @@
 
 Guide for Fabric/Power BI admin-level API operations using `fab`. These APIs require admin privileges and enable cross-workspace discovery, tenant-wide operations, and governance.
 
-## Docs 
+## Docs
 
-For more info use:
-- `mslearn search` or `mslearn fetch`
-- https://learn.microsoft.com/rest/api/fabric/admin/
+https://learn.microsoft.com/rest/api/fabric/admin/
 
 ## Prerequisites
 
