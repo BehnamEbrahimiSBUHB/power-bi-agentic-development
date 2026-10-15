@@ -409,7 +409,7 @@ if(majorVersion >= 3) {
 
 ### Fetching Docs
 
-To retrieve current TOM API reference docs, use `microsoft_docs_search` + `microsoft_docs_fetch` (MCP) if available, otherwise `mslearn search` + `mslearn fetch` (CLI). Search based on the user's request and run multiple searches as needed to ensure sufficient context before proceeding.
+To retrieve current TOM API reference docs, use `mslearn search` + `mslearn fetch` (CLI) or browse https://learn.microsoft.com. Search based on the user's request and run multiple searches as needed to ensure sufficient context before proceeding.
 
 ### External References
 - [Tabular Editor Advanced Scripting](https://docs.tabulareditor.com/te2/Advanced-Scripting.html)
