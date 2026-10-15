@@ -94,10 +94,10 @@ pbir theme set-colors "Report.Report" --good "#00B050" --bad "#FF0000" --neutral
 
 # Step 3: Apply to visual component
 pbir visuals cf "Report.Report/Page.Page/Visual.Visual" \
-  --measure "labels.color _Fmt.RevenueColor.Measure"
+  --measure "labels.color _Fmt.RevenueColor"
 
 # Apply to data point fills (bar/column colors)
-pbir visuals cf "Visual.Visual" --measure "dataPoint.fill _Fmt.RevenueColor.Measure"
+pbir visuals cf "Visual.Visual" --measure "dataPoint.fill _Fmt.RevenueColor"
 ```
 
 ### Label Latest Data Point Only

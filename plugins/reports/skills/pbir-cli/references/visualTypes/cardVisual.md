@@ -29,19 +29,19 @@ The `kpi` visual is a specialized indicator that shows a value against a goal wi
 ```bash
 # New card visual
 pbir add visual cardVisual "Report.Report/Page.Page" --title "Revenue" \
-  -d "Data:Sales.Revenue.Measure" \
+  -d "Data:Sales.Revenue" \
   --x 24 --y 24 --width 290 --height 140
 
 # KPI visual
 pbir add visual kpi "Report.Report/Page.Page" --title "Revenue vs Target" \
-  -d "Indicator:Sales.Revenue.Measure" -d "Goal:Sales.Target.Measure" -d "TrendLine:Date.Month.Column" \
+  -d "Indicator:Sales.Revenue" -d "Goal:Sales.Target" -d "TrendLine:Date.Month" \
   --x 24 --y 24 --width 290 --height 200
 
 # KPI row (4 cards)
-pbir add visual cardVisual "Page.Page" --title "Revenue" -d "Data:Sales.Revenue.Measure" --x 24 --y 24 --width 290 --height 140
-pbir add visual cardVisual "Page.Page" --title "Orders" -d "Data:Orders.Count.Measure" --x 338 --y 24 --width 290 --height 140
-pbir add visual cardVisual "Page.Page" --title "Margin" -d "Data:Sales.Margin.Measure" --x 652 --y 24 --width 290 --height 140
-pbir add visual cardVisual "Page.Page" --title "Customers" -d "Data:Customers.Count.Measure" --x 966 --y 24 --width 290 --height 140
+pbir add visual cardVisual "Page.Page" --title "Revenue" -d "Data:Sales.Revenue" --x 24 --y 24 --width 290 --height 140
+pbir add visual cardVisual "Page.Page" --title "Orders" -d "Data:Orders.Count" --x 338 --y 24 --width 290 --height 140
+pbir add visual cardVisual "Page.Page" --title "Margin" -d "Data:Sales.Margin" --x 652 --y 24 --width 290 --height 140
+pbir add visual cardVisual "Page.Page" --title "Customers" -d "Data:Customers.Count" --x 966 --y 24 --width 290 --height 140
 ```
 
 ## Rules
@@ -99,11 +99,11 @@ pbir set "Visual.Visual.image.verticalAlignment" --value middle
 
 ```bash
 pbir visuals card-reference "Visual.Visual" \
-  --actual "Sales.Revenue.Measure" --target "Sales.Revenue PY.Measure" \
-  --detail "Sales.Revenue vs PY %.Measure" --detail-color "Sales.Revenue Status Color.Measure" \
+  --actual "Sales.Revenue" --target "Sales.Revenue PY" \
+  --detail "Sales.Revenue vs PY %" --detail-color "Sales.Revenue Status Color" \
   --title "Prior year"
 pbir visuals cf "Visual.Visual" \
-  --measure "value.fontColor Sales.Revenue Status Color.Measure" \
+  --measure "value.fontColor Sales.Revenue Status Color" \
   --target-field "Sales.Revenue"
 ```
 

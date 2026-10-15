@@ -60,7 +60,7 @@ These answers determine visual type, field bindings, position, and size.
 ```bash
 # Basic creation with title and data
 pbir add visual card "Report.Report/Page.Page" --title "Revenue" \
-  -d "Values:Sales.Revenue.Measure" --x 20 --y 20 --width 280 --height 140
+  -d "Values:Sales.Revenue" --x 20 --y 20 --width 280 --height 140
 
 # Chart with position
 pbir add visual lineChart "Report.Report/Page.Page" --title "Trend" \
@@ -81,9 +81,9 @@ pbir add visual --list
 pbir visuals bind "Report.Report/Page.Page/Visual.Visual" --list-roles
 
 # Add fields
-pbir visuals bind "Visual.Visual" -a "Category:Date.Month.Column"
-pbir visuals bind "Visual.Visual" -a "Y:Sales.Revenue.Measure"
-pbir visuals bind "Visual.Visual" -a "Legend:Products.Category.Column"
+pbir visuals bind "Visual.Visual" -a "Category:Date.Month"
+pbir visuals bind "Visual.Visual" -a "Y:Sales.Revenue" -t Measure
+pbir visuals bind "Visual.Visual" -a "Legend:Products.Category" -t Column
 
 # Verify bindings
 pbir visuals bind "Visual.Visual" --show
@@ -152,10 +152,10 @@ pbir add subtitle "Report.Report/Page.Page" "Q4 2025 Performance"
 
 ### KPI Row (4 cards)
 ```bash
-pbir add visual card "Page.Page" --title "Revenue" -d "Values:Sales.Revenue.Measure" --x 20 --y 20 --width 290 --height 140
-pbir add visual card "Page.Page" --title "Orders" -d "Values:Orders.Count.Measure" --x 330 --y 20 --width 290 --height 140
-pbir add visual card "Page.Page" --title "Margin" -d "Values:Sales.Margin.Measure" --x 640 --y 20 --width 290 --height 140
-pbir add visual card "Page.Page" --title "Customers" -d "Values:Customers.Count.Measure" --x 950 --y 20 --width 290 --height 140
+pbir add visual card "Page.Page" --title "Revenue" -d "Values:Sales.Revenue" --x 20 --y 20 --width 290 --height 140
+pbir add visual card "Page.Page" --title "Orders" -d "Values:Orders.Count" --x 330 --y 20 --width 290 --height 140
+pbir add visual card "Page.Page" --title "Margin" -d "Values:Sales.Margin" --x 640 --y 20 --width 290 --height 140
+pbir add visual card "Page.Page" --title "Customers" -d "Values:Customers.Count" --x 950 --y 20 --width 290 --height 140
 ```
 
 ### Full-Width Chart

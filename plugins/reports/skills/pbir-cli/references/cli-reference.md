@@ -158,7 +158,7 @@ pbir pages interactions "Report.Report/Page.Page" --source "Slicer_Region,Slicer
 pbir pages json "Report.Report/Page.Page"                  # Raw page JSON
 
 # Drillthrough, tooltip pages, and theme conformance
-pbir pages drillthrough "Report.Report/Details.Page" --field "Products.Category.Column"  # Add a drillthrough field (--cross-report, --show, --clear)
+pbir pages drillthrough "Report.Report/Details.Page" --table Products --field Category  # Add a drillthrough field (--cross-report, --show, --clear)
 pbir pages set-tooltip "Report.Report/Tooltip.Page" --width 400 --height 300            # Make a page a tooltip page (--clear to revert)
 pbir pages conform "Report.Report/Page.Page" --properties title,background --force --no-dry-run  # Conform visuals to the theme (dry-run by default)
 
@@ -174,10 +174,10 @@ pbir mv "R1.Report/Page.Page" "R2.Report/Page.Page"
 ```bash
 # Single visual
 pbir add visual card "Report.Report/Page.Page" --title "Revenue"
-pbir add visual card "Report.Report/Page.Page" -d "Values:Sales.Revenue.Measure" --x 100 --y 50
+pbir add visual card "Report.Report/Page.Page" -d "Values:Sales.Revenue" --x 100 --y 50
 pbir add visual lineChart "Report.Report/Page.Page" --title "Trend" --width 600 --height 400
 pbir add visual tableEx "Report.Report/Page.Page" --title "Detail"
-pbir add visual kpi "Report.Report/Page.Page" -d "Indicator:Sales.Revenue.Measure"
+pbir add visual kpi "Report.Report/Page.Page" -d "Indicator:Sales.Revenue"
 pbir add visual --list                            # List all 50+ visual types with data roles
 
 # Role names match the visual list (Values, Category, Y, Series, Indicator, ...).
@@ -246,7 +246,7 @@ pbir visuals table-density "Table.Visual" --preset compact --row-padding 0 --ima
 pbir visuals table-density "Table.Visual" --preset compact --row-padding 0 --image-height 30 --fit-columns-to-content
 
 # New Card target/reference label
-pbir visuals card-reference "Card.Visual" --actual "Sales.Revenue.Measure" --target "Sales.Revenue PY.Measure" --detail "Sales.Revenue vs PY %.Measure" --title "Prior year"
+pbir visuals card-reference "Card.Visual" --actual "Sales.Revenue" --target "Sales.Revenue PY" --detail "Sales.Revenue vs PY %" --title "Prior year"
 
 # Header and tooltip
 pbir visuals header "Visual.Visual" --show       # Visual header icons
@@ -292,7 +292,7 @@ pbir set "Visual.Visual.y1AxisReferenceLine.id(1).displayName" --value "Target" 
 # `add` is NOT idempotent (each call appends); it prints the new id to stdout for chaining: ID=$(pbir visuals reference-line add ...)
 
 # Error bars (upsert per series; style via pbir set with field())
-pbir visuals error-bars add "Visual.Visual" --series "Sales.Revenue.Measure" --upper "Sales.Target.Measure" --lower "Sales.Target.Measure"
+pbir visuals error-bars add "Visual.Visual" --series "Sales.Revenue" --upper "Sales.Target" --lower "Sales.Target"
 pbir visuals error-bars list "Visual.Visual"
 pbir visuals error-bars remove "Visual.Visual" --series "Sales.Revenue"
 pbir set "Visual.Visual.error.field(Sales.Revenue).markerShape" --value "diamond"  # Style after creation
@@ -306,9 +306,9 @@ pbir visuals bind "Visual.Visual" --show
 pbir visuals bind "Visual.Visual" --list-roles
 
 # Add fields
-pbir visuals bind "Visual.Visual" -a "Values:Sales.Revenue.Measure"
-pbir visuals bind "Visual.Visual" -a "Category:Products.Category.Column"
-pbir visuals bind "Visual.Visual" -a "Values:Sales.TotalSales.Measure"
+pbir visuals bind "Visual.Visual" -a "Values:Sales.Revenue"
+pbir visuals bind "Visual.Visual" -a "Category:Products.Category" -t Column
+pbir visuals bind "Visual.Visual" -a "Values:Sales.TotalSales" -t Measure
 
 # Remove and clear
 pbir visuals bind "Visual.Visual" -r "Values:Sales.Revenue"
@@ -333,8 +333,8 @@ Two surfaces share one model:
 
 ```bash
 # Create measure-based CF (structural. stays on `visuals cf`)
-pbir visuals cf "Visual.Visual" --measure "labels.color _Fmt.StatusColor.Measure"
-pbir visuals cf "Visual.Visual" --measure "dataPoint.fill _Fmt.BarColor.Measure"
+pbir visuals cf "Visual.Visual" --measure "labels.color _Fmt.StatusColor"
+pbir visuals cf "Visual.Visual" --measure "dataPoint.fill _Fmt.BarColor"
 
 # Read CF via pbir get (.cf tail)
 pbir get "Visual.Visual.dataPoint.fill.cf"                              # ASCII summary
@@ -366,8 +366,8 @@ pbir visuals cf "Target.Visual" --copy-from "Source.Visual"                 # Co
 
 # Note: the former `pbir visuals cf --info`/`--list`/`--has`/`--set-color`/
 # `--remove`/`--remove-all` flags and the `pbir visuals format-field` /
-# `format-state` commands no longer exist. Use the `pbir get`/`pbir set`
-# forms above.
+# `format-state` commands no longer exist (removed in 0.9.30; listed in
+# `pbir context` under migration-1.0). Use the `pbir get`/`pbir set` forms above.
 ```
 
 ### Custom Visuals
@@ -478,10 +478,10 @@ pbir fields list "Report.Report"                              # All unique field
 pbir fields list "Report.Report/Page.Page"                    # Fields on a page
 pbir fields find "Revenue" "Report.Report"                    # Fuzzy search with locations
 pbir fields where-used "Report.Report" "Sales.Revenue"        # Every known location that references a field (--contains for substring)
-pbir fields replace "Report.Report" --from "Sales.Revenue.Measure" --to "Finance.Revenue.Measure"   # Repoint a field everywhere
+pbir fields replace "Report.Report" --from "Sales.Revenue" --to "Finance.Revenue"   # Repoint a field everywhere
 pbir fields replace-table "Report.Report" --from "f_invoices" --to "Invoices"        # Rename a TABLE across all references (--dry-run)
 pbir fields rename "Report.Report" "Sales.Revenue" "Total Sales"   # Set a field's display name (--list to view, --clear to reset)
-pbir fields add "Report.Report/Page.Page/Visual.Visual" --bucket Values --field Sales.Revenue.Measure
+pbir fields add "Report.Report/Page.Page/Visual.Visual" --bucket Values --field Sales.Revenue
 ```
 
 ## Filter Operations
@@ -501,9 +501,9 @@ pbir filters lock "Report.Report/Filter.Filter"
 pbir filters unlock "Report.Report/Filter.Filter"
 
 # Creation
-pbir add filter "Date.Year.Column" -r "Report.Report"
-pbir add filter "Products.Category.Column" -p "Report.Report/Page.Page" --values Electronics
-pbir add filter "Date.Date.Column" -r "Report.Report" --type RelativeDate
+pbir add filter Date Year -r "Report.Report"
+pbir add filter Products Category -p "Report.Report/Page.Page" --values Electronics
+pbir add filter Date Date -r "Report.Report" --type RelativeDate
 
 # Filter pane management
 pbir filters pane-hide "Report.Report"
@@ -656,7 +656,7 @@ pbir config set debug true                       # Set config value
 pbir config paths                                # Where config, auth state, templates, backups, and caches live (--json)
 ```
 
-`pbir` and `pbir-mcp` share one platform-native storage layout (since 0.9.30): configuration in the OS config directory (roaming AppData on Windows, `Library` on macOS, XDG on Linux), templates/backups/auth state in the data directory, and disposable caches (PBIX extractions, model metadata, schemas) in the cache directory. Never hard-code `~/.pbir/` or `~/.config/pbir/`; ask `pbir config paths`. Nothing reads the legacy layout any more; move old configuration, rules, backups and templates to the locations `pbir config paths` prints, and sign in again with `pbir auth login` if the sign-in lived in the OS keychain. `PBIR_CONFIG` overrides the config file and `PBIR_AUTH_DIR` the auth directory (absolute paths). `pbir setup` was removed; install this plugin from the marketplace instead.
+`pbir` and `pbir-mcp` share one platform-native storage layout (since 0.9.30): configuration in the OS config directory (roaming AppData on Windows, `Library` on macOS, XDG on Linux), templates/backups/auth state in the data directory, and disposable caches (PBIX extractions, model metadata, schemas) in the cache directory. Never hard-code `~/.pbir/` or `~/.config/pbir/`; ask `pbir config paths`. The first run after upgrading migrates durable files from the legacy layout and leaves legacy caches in place for manual deletion. `PBIR_CONFIG` overrides the config file and `PBIR_AUTH_DIR` the auth directory (absolute paths). `pbir setup` was removed; install this plugin from the marketplace instead.
 
 ```bash
 

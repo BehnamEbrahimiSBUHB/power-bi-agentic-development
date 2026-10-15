@@ -204,16 +204,16 @@ pbir theme set-colors "Report.Report" --good "#00B050" --bad "#FF0000" --neutral
 
 # Step 3: Apply to visual
 pbir visuals cf "Report.Report/Page.Page/Visual.Visual" \
-  --measure "labels.color _Fmt.RevenueColor.Measure"
+  --measure "labels.color _Fmt.RevenueColor"
 
 # Common targets
-pbir visuals cf "Visual.Visual" --measure "dataPoint.fill _Fmt.RevenueColor.Measure"
-pbir visuals cf "Visual.Visual" --measure "values.fontColor _Fmt.OTDColor.Measure"
+pbir visuals cf "Visual.Visual" --measure "dataPoint.fill _Fmt.RevenueColor"
+pbir visuals cf "Visual.Visual" --measure "values.fontColor _Fmt.OTDColor"
 ```
 
 The `--measure` format is `"container.prop MeasureRef"` where:
 - `container.prop` targets a visual object container and property.
-- `MeasureRef` is the typed measure reference, `Table.Measure.Measure`.
+- `MeasureRef` is the measure reference in `Table.Measure` format.
 
 Color properties (fill, color, fontColor, strokeColor, etc.) are automatically wrapped in `{"solid": {"color": ...}}`.
 
@@ -222,8 +222,8 @@ Color properties (fill, color, fontColor, strokeColor, etc.) are automatically w
 `--measure` also works for non-color properties like axis bounds:
 
 ```bash
-pbir visuals cf "Visual.Visual" --measure "valueAxis.start _Fmt.Zero.Measure"
-pbir visuals cf "Visual.Visual" --measure "valueAxis.end _Fmt.AxisCeiling.Measure"
+pbir visuals cf "Visual.Visual" --measure "valueAxis.start _Fmt.Zero"
+pbir visuals cf "Visual.Visual" --measure "valueAxis.end _Fmt.AxisCeiling"
 ```
 
 ### Verify in reading view, and mind error bars
@@ -247,15 +247,15 @@ pbir visuals cf "Report.Report/Page.Page/Visual.Visual" \
 
 # 3-color gradient (omit --mid-value for an automatic midpoint)
 pbir visuals cf "Visual.Visual" \
-  --gradient --field "Table.Field.Measure" --min-color "#FF0000" --max-color "#00FF00" --mid-color "#FFFF00"
+  --gradient --field "Table.Field" --min-color "#FF0000" --max-color "#00FF00" --mid-color "#FFFF00"
 
 # 3-color gradient with an explicit midpoint value
 pbir visuals cf "Visual.Visual" \
-  --gradient --field "Table.Field.Measure" --min-color bad --mid-color neutral --max-color good --mid-value 0
+  --gradient --field "Table.Field" --min-color bad --mid-color neutral --max-color good --mid-value 0
 
 # Gradient on a specific container.prop
 pbir visuals cf "Visual.Visual" \
-  --gradient --field "Table.Field.Measure" --min-color bad --max-color good --on labels.fontColor
+  --gradient --field "Table.Field" --min-color bad --max-color good --on labels.fontColor
 
 # Data bars
 pbir visuals cf "Visual.Visual" \
@@ -263,7 +263,7 @@ pbir visuals cf "Visual.Visual" \
 
 # Data bars with custom colors
 pbir visuals cf "Visual.Visual" \
-  --data-bars --field "Table.Field.Measure" --positive-color good --negative-color bad
+  --data-bars --field "Table.Field" --positive-color good --negative-color bad
 ```
 
 ### Rules and Icons
@@ -274,7 +274,7 @@ pbir visuals cf "Visual.Visual" --rules --field "Invoices.Net Invoice Value" \
   --rule "gt 1000 good" --rule "lt 0 bad"
 
 # Rules CF on a specific container
-pbir visuals cf "Visual.Visual" --rules --field "Table.Field.Measure" \
+pbir visuals cf "Visual.Visual" --rules --field "Table.Field" \
   --rule "gt 100 good" --rule "lte 100 neutral" --on labels.fontColor
 
 # Icons CF (pass --on values for table/matrix; icons render before the value)
@@ -318,7 +318,7 @@ pbir visuals cf "Card.Visual" --image --field "_SVG.Bullet" \
   --image-size 60 --image-position Right
 
 # Grid: the measure must already be a projected column
-pbir fields add "Grid.Visual" -b Values -f "_SVG.Bullet.Measure"
+pbir fields add "Grid.Visual" -b Values -f "_SVG.Bullet" --type Measure
 pbir visuals cf "Grid.Visual" --image --field "_SVG.Bullet" --image-size 40
 ```
 
@@ -394,7 +394,7 @@ Re-running a builder on the same property and scope replaces the entry, so chang
 
 ```bash
 # dataPoint.fill holds a gradient; this replaces it with rules
-pbir visuals cf "Visual.Visual" --rules --field "Table.Field.Measure" \
+pbir visuals cf "Visual.Visual" --rules --field "Table.Field" \
   --rule "gt 100 good" --rule "lt 0 bad"
 ```
 
